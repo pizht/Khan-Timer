@@ -1,0 +1,16 @@
+# pnpm settings for this project (pnpm >= 10 reads these here rather than from
+# package.json).
+#
+# allowBuilds: esbuild's install script only downloads/links its platform
+# binary. It is allowed because the build cannot run without it.
+allowBuilds:
+  esbuild: true
+
+# Vitest depends on Rollup, whose platform-native binding cannot be loaded when
+# the Node binary runs under the macOS hardened runtime: the addon is linker
+# signed with a different team identifier, so library validation rejects it
+# with ERR_DLOPEN_FAILED. The WebAssembly build of Rollup is API-identical and
+# has no native addon, which also makes the toolchain portable.
+# See README -> Troubleshooting.
+overrides:
+  rollup: npm:@rollup/wasm-node@4.64.2

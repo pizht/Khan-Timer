@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Khan Academy Timer",
+  "version": "1.0.0",
+  "description": "可汗学院练习题与测验的题目计时器：自动识别切题、正计时/倒计时、悬浮面板与本地记录。",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage", "activeTab"],
+  "action": {
+    "default_title": "Khan Academy Timer",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.khanacademy.org/*",
+        "https://*.khanacademy.org/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

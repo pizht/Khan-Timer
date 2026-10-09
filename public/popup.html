@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Khan Academy Timer</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>题目计时</h1>
+      <span id="version" class="version"></span>
+    </header>
+
+    <section class="card" id="status-card">
+      <div class="status-row">
+        <span class="status-label">当前状态</span>
+        <span class="status-value" id="status-text">读取中…</span>
+      </div>
+      <div class="readout" id="readout" hidden>
+        <span class="time" id="display">0:00</span>
+        <span class="tag" id="mode-tag">正计时</span>
+        <span class="tag expired-tag" id="expired-tag" hidden>已超时</span>
+      </div>
+      <dl class="kv" id="details" hidden>
+        <dt>识别方式</dt><dd id="d-strategy">—</dd>
+        <dt>置信度</dt><dd id="d-confidence">—</dd>
+        <dt>题目指纹</dt><dd id="d-question" class="mono">—</dd>
+        <dt>题目进度</dt><dd id="d-progress">—</dd>
+        <dt>最近事件</dt><dd id="d-event">—</dd>
+      </dl>
+      <p class="warning" id="warning" hidden></p>
+      <details class="diag" id="diag-box" hidden>
+        <summary>诊断信息</summary>
+        <pre id="diag-text"></pre>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>设置</h2>
+
+      <label class="field">
+        <span class="field-label">默认计时模式</span>
+        <select id="defaultMode">
+          <option value="countup">正计时（记录用时）</option>
+          <option value="countdown">倒计时（每题限时）</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">每题限时（秒）</span>
+        <input id="countdownLimitSeconds" type="number" min="5" max="3600" step="5" />
+      </label>
+
+      <label class="field field-inline">
+        <input id="soundEnabled" type="checkbox" />
+        <span>倒计时归零时播放提示音</span>
+      </label>
+
+      <label class="field field-inline">
+        <input id="overlayVisible" type="checkbox" />
+        <span>在页面上显示悬浮面板</span>
+      </label>
+
+      <label class="field field-inline">
+        <input id="overlayCollapsed" type="checkbox" />
+        <span>面板默认折叠为小胶囊</span>
+      </label>
+
+      <label class="field field-inline">
+        <input id="resumeAcrossReload" type="checkbox" />
+        <span>关闭页面后重新打开时，继续上次用时</span>
+      </label>
+
+      <p class="hint" id="save-hint" hidden>已保存</p>
+    </section>
+
+    <section class="card">
+      <h2>本地记录</h2>
+      <p class="hint">记录只保存在本机浏览器中，不会上传到任何服务器。</p>
+      <div class="record-actions">
+        <span id="record-count" class="count">已保存 0 条</span>
+        <button id="clear-records" class="btn danger" type="button">清除全部记录</button>
+      </div>
+      <ul id="recent" class="recent"></ul>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
