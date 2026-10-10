@@ -25,7 +25,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 
 | # | 验收项 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（55/55）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `README.md` → 安装到 Edge。 |
+| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（60/60）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `README.md` → 安装到 Edge。 |
 | 2 | 在目标 Khan Academy 页面显示悬浮计时面板 | ✅ | 检查项 `content script injects the panel host`、`panel is visible`、`the detected question is reported in the panel`（实测 `进度 1 of 4 识别：题目ID`）。截图 `references/screenshots/overlay-countup.png`。 |
 | 3 | 面板可正常折叠/展开或以已约定方式隐藏 | ✅ | 收集 `onToggleCollapse` → 折叠为小胶囊；截图 `references/screenshots/overlay-collapsed.png`。另有弹出面板的「在页面上显示悬浮面板」总开关。 |
 | 4 | 面板操作不会触发题目识别器错误重置计时 | ✅ | 面板挂在 `document.body` 的 Shadow DOM 宿主 `#khan-academy-timer-host` 内，位于题目区域之外；检测器的指纹计算还会剔除该宿主与 `[role="dialog"]`/`[aria-live]`。端到端实测：连续点击暂停/继续/重置后，`reset is reported in the panel footer`（`题目未变化，计时继续`）——重置未被识别为切题。单元测试 `typing an answer into the widget is NOT a question change` 等同类回归用例共 4 条。 |
@@ -76,6 +76,21 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 1 | 点击 Skip 后停止本题计时 | ✅ | 只有**确认**跳过才停表（点 Cancel 不停）。真实 Edge 端到端：`skip asks for confirmation first`、`the skip confirmation can be triggered`、`confirming a skip stops the timer`（`0:04 → 0:05`，随后 3.5 s 保持不变）、`answering after a skip does not resume the stopped timer`。规则由纯函数 `completionTriggerFor()` 实现，单元测试覆盖「答错不停」「确认跳过才停」「取消不停」等 6 种情形。 |
 | 2 | 点击 Check 判定正确后停止本题计时 | ✅ | 真实 Edge：`the page accepted the correct answer`（`state=correct`）、`answering correctly stops the timer`（`status-finished`）、`the panel shows the completed state`、`the pause control is disabled once the question is done`、`the frozen value does not creep upwards afterwards`（3.5 s 后仍为 `0:04`）。答错时**不停表**（可重试），由 `completionTriggerFor()` 与单元测试保证。 |
 | 3 | 做完所有题后点击 `Show summary`，在结束页显示本轮每题用时 | ✅ | 真实 Edge：`the end-of-exercise summary screen is reached`、`the summary card is injected`、`the summary lists every question of this run`、`each summary row shows a duration`、`the summary shows a total`、`the summary marks the skipped question`。实测卡片内容：`本轮每题用时 / 共 3 题 · 合计 0:15 / 第 1 题答对 0:04 / 第 2 题已跳过 0:05 / 第 3 题 0:06`。 |
+
+### 追加修正：答错后重答正确没有停表（用户报告）
+
+| 项目 | 内容 |
+|---|---|
+| **现象** | 第一次答错、第二次点 `Check again` 答对时，本题计时没有停止 |
+| **根因** | 可汗学院的进度标记保留的是**第一次作答**的判定。先答错再答对时，标记始终停在 `exercise-progress-<i>-incorrect-current`，**不会**变成 `correct`。原实现只监听「状态字变为 correct」，因此重答正确时没有任何事件，计时一直跑 |
+| **修复** | 增加第二个互补信号：**`Check` 按钮被「下一题」控件取代**（`isQuestionFinished()`，即 `exercise-next-question` 存在且 `exercise-check-answer` 不存在）。该信号覆盖「任意一次答对」，包含重答 |
+| **覆盖** | 状态字变 `correct` → 首次就答对（观察器触发，<250 ms）；按钮替换 → 任意一次答对（受节流的页面检查，≈700 ms）。两者幂等：先触发者写入待写记录，后触发者因 `pendingRecord !== null` 直接返回 |
+| **单元测试** | `isQuestionFinished` 6 条（含「答错后为 false」「重答正确为 true」「过渡态两按钮并存为 false」）+ 2 条说明「重答正确无法由状态字发现」 |
+| **端到端** | 新增真实场景：先提交错误答案（正确值 +7）→ 断言计时**继续** → 再提交正确答案 → 断言计时**停止**且 3.2 s 后冻结。实测输出：`state=incorrect finished=true`、`status=status-finished time=0:07`、`0:07 -> 0:07` |
+
+顺带确认：这类题目的记录里 `firstSubmissionOutcome` 仍是 `incorrect`，
+结束页表格显示「答错」—— 这与需求 2.4「保存第一次提交答案的时间戳」一致，
+标记的是**第一次提交**的结果，而不是这题最终有没有做对。
 
 ### 相关的采集与设计修正
 
@@ -171,7 +186,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 152 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 160 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

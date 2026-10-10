@@ -174,6 +174,33 @@ export const NEXT_QUESTION_BUTTON: SelectorStrategy[] = [
   { name: 'exercise-next-question', select: first('[data-testid="exercise-next-question"]') },
 ];
 
+/**
+ * Has the current question been finished?
+ *
+ * [VER] Khan Academy REPLACES the Check button with the advance control once a
+ * question is done, and this is the only reliable signal for a correct answer
+ * on a RETRY.
+ *
+ * Why the progress state word is not enough: the marker keeps the FIRST
+ * attempt's verdict. Observed directly — a question answered wrong and then
+ * right stayed `exercise-progress-0-incorrect-current` for the rest of the
+ * question, while the buttons swapped to `exercise-next-question`:
+ *
+ *     after a wrong answer:  check-answer present, next-question ABSENT
+ *     after a correct retry: check-answer ABSENT,  next-question present
+ *
+ * So `completionTriggerFor()` (which reads the state word) handles a first-try
+ * correct answer promptly, and this predicate catches the retry case. Both are
+ * idempotent: whichever fires first sets the held record, and the other is then
+ * a no-op.
+ */
+export function isQuestionFinished(doc: ParentNode): boolean {
+  return (
+    doc.querySelector('[data-testid="exercise-next-question"]') !== null &&
+    doc.querySelector('[data-testid="exercise-check-answer"]') === null
+  );
+}
+
 /** Skip control. Advancing this way opens a confirmation dialog [VER]. */
 export const SKIP_BUTTON: SelectorStrategy[] = [
   { name: 'exercise-skip-button', select: first('[data-testid="exercise-skip-button"]') },

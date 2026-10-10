@@ -453,3 +453,69 @@ div[data-testid="eot-phantom-user-registration"]
 2. 由于跳过之后仍需作答才能前进，可能出现在同一题上「先跳过、再答对」的情况。
    实现中第一完成原因胜出（记录为 `skipped`），不会为同一题产生两条记录。
 
+
+---
+
+## 11. 答错后重答正确：进度标记不会变成 correct
+
+**方式：** 先故意提交一个错误答案（正确值 +7），等判定为错误后，再提交正确答案。
+这是用户报告的一个缺陷的根因调查。
+
+### 11.1 观测结果
+
+**进度标记保留的是「第一次作答」的判定**，重答正确不会把它改成 `correct`：
+
+| 阶段 | 进度 testid | `exercise-check-answer` | `exercise-next-question` |
+|---|---|---|---|
+| 未作答 | `exercise-progress-0-incomplete-current` | 存在（`Check`） | 无 |
+| **答错后** | `exercise-progress-0-incorrect-current` | 存在（文案变成 `Check again`） | 无 |
+| **重答正确后** | **仍是 `exercise-progress-0-incorrect-current`** | **消失** | **出现** |
+
+也就是说：
+
+- **状态字**只反映第一次作答 → 重答正确时**没有任何状态变化**；
+- 但**按钮发生了替换**：`Check` 被「下一题」控件取代。
+
+### 11.2 对实现的影响（这是一个真实缺陷）
+
+原实现只用「进度状态字」判断「答对了」：
+
+```
+incomplete -> correct   ⇒ 停表
+```
+
+这在**第一次就答对**时有效（也够快，因为观察器立刻触发），
+但**答错后重答正确时永远不触发** —— 状态字停在 `incorrect` 不动，
+于是计时一直跑下去。这正是用户报告的现象。
+
+**修复：** 增加第二个信号，二者互补且幂等：
+
+| 信号 | 覆盖场景 | 触发时机 |
+|---|---|---|
+| 进度状态字变为 `correct` | **第一次**就答对 | 观察器触发，立即（<250 ms） |
+| `Check` 按钮被「下一题」控件替换 | **任意一次**答对（含重答） | 受节流的页面检查，≈700 ms |
+
+两个信号谁先触发都可以：先触发者写入待写记录，后触发者因
+`pendingRecord !== null` 直接返回，不会重复记录。
+
+**回归测试：**
+
+```
+tests/question-detector.test.ts
+  site-profile: isQuestionFinished
+    > is false right after a WRONG answer (Check becomes "Check again")
+    > is true after a correct RETRY, where the status word stays "incorrect"
+  completionTriggerFor + isQuestionFinished cover both answer paths
+    > correct retry is NOT caught by the status word, which is why the button check exists
+```
+
+端到端验证脚本也新增了对应场景（真实的「先答错、再答对」），并断言：
+答错时计时**继续**，重答正确后计时**停止**且数值冻结。
+
+### 11.3 顺带确认：记录里的「第一次提交对错」仍然正确
+
+由于状态字保留第一次的判定，记录中的 `firstSubmissionOutcome` 在
+「先错后对」的题目上会是 `incorrect` —— 这与需求 2.4
+「如果第一次回答错误，还要保存第一次提交答案的时间戳」一致，
+结束页表格上该题显示「答错」标记也是准确的（它表示**第一次提交**的结果，
+而不是这题最终有没有做对）。

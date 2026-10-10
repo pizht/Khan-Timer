@@ -31,7 +31,7 @@
 | 测试日期 | 2025-10-09 |
 | 浏览器 | Microsoft Edge 154.0.4258.62 |
 
-**验证结果：** 通过 `scripts/verify-extension.mjs` 驱动，**55/55 项检查全部通过**：
+**验证结果：** 通过 `scripts/verify-extension.mjs` 驱动，**60/60 项检查全部通过**：
 
 | 验证项 | 结果 |
 |---|---|

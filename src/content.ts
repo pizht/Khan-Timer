@@ -50,6 +50,7 @@ import {
   SUMMARY_HOST,
   completionTriggerFor,
   exerciseKeyFromUrl,
+  isQuestionFinished,
   isSummaryPage,
   readProgress,
   readSubmissionOutcome,
@@ -133,7 +134,7 @@ class ContentController {
   private pendingRecord: QuestionRecord | null = null;
   /** Set while the learner is on the end-of-exercise summary screen. */
   private inSummary = false;
-  private lastSummaryCheckAt = 0;
+  private lastPageCheckAt = 0;
   private summaryView: SummaryView | null = null;
   /**
    * Set when the Skip control is clicked. A skip is only treated as final once
@@ -482,9 +483,10 @@ class ContentController {
    * report "region not found". This check runs alongside it and takes over once
    * the exercise is finished.
    */
-  private checkSummaryState(now: number): void {
-    if (now - this.lastSummaryCheckAt < SUMMARY_CHECK_INTERVAL_MS) return;
-    this.lastSummaryCheckAt = now;
+  private checkPageState(now: number): void {
+    if (now - this.lastPageCheckAt < SUMMARY_CHECK_INTERVAL_MS) return;
+    this.lastPageCheckAt = now;
+
     const onSummary = isSummaryPage(document);
     if (onSummary && !this.inSummary) {
       // Guard against a false positive while the page is still loading: the
@@ -493,9 +495,33 @@ class ContentController {
       // timing a question can be finished.
       if (!this.seenQuestion) return;
       void this.enterSummary(now);
-    } else if (!onSummary && this.inSummary) {
-      this.leaveSummary();
+      return;
     }
+    if (!onSummary && this.inSummary) {
+      this.leaveSummary();
+      return;
+    }
+    if (onSummary) return;
+
+    // A question finished by a CORRECT RETRY never shows up as a progress state
+    // change (the marker keeps the first attempt's "incorrect"), so catch it
+    // here instead: the Check button has been replaced by the advance control.
+    if (this.pendingRecord === null && this.seenQuestion && isQuestionFinished(document)) {
+      this.finishCurrentQuestion(now);
+    }
+  }
+
+  /**
+   * The learner is done with the current question and the clock must stop.
+   *
+   * Prefers "skipped" when no submission was ever recorded, so a skip that
+   * surfaces through the advance control is still labelled correctly.
+   */
+  private finishCurrentQuestion(now: number): void {
+    const engine = this.engine;
+    if (!engine) return;
+    const skipped = engine.getFirstSubmission() === null && this.skipInitiated;
+    this.completeCurrentQuestion(now, skipped ? 'skipped' : 'answered-correct');
   }
 
   private async enterSummary(now: number): Promise<void> {
@@ -649,7 +675,7 @@ class ContentController {
     // Refresh the detector's diagnostics roughly once a second so the panel's
     // support attribute reflects reality even when nothing is changing.
     if (this.tickCount % 4 === 0) this.detector?.refreshDiagnostics();
-    this.checkSummaryState(now);
+    this.checkPageState(now);
     this.render();
   }
 

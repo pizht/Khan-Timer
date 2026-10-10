@@ -146,6 +146,7 @@ pnpm run build
 | 选中选项 / 在输入框里打字 | **继续** | 只是答题过程，不算做完 |
 | 点 Check 但答**错** | **继续** | 还可以重试，计时不该中断 |
 | 点 Check 且答**对** | **停止** | 面板变为「已完成」，数值冻结 |
+| **答错后重答正确** | **停止** | 同上。可汗学院会把进度标记留在「第一次答错」，所以此处靠「Check 按钮被下一题控件取代」来判定 |
 | 点 Skip 后点 **Cancel** | **继续** | 没有真的跳过 |
 | 点 Skip 后确认 **Yes, skip** | **停止** | 面板显示已跳过 |
 | 倒计时归零 | 继续累计超时时间 | 显示超时状态，不自动提交、不自动跳题 |
@@ -154,6 +155,13 @@ pnpm run build
 答对或跳过后计时停止，但记录要等**题目真正切换**（或结束页出现）时才写入，
 这样结束页才能拿到最后一题的用时。如果停表后又点了「重置本题」，
 本题会重新开始计时。
+
+> **一个容易踩的坑（已处理）：** 可汗学院的题目进度标记保留的是**第一次作答**的判定。
+> 一道题先答错、再答对，标记会一直停在「答错」不变，**不会**变成「答对」。
+> 如果只看这个状态，重答正确时计时永远不会停。所以实现同时使用两个信号：
+> 状态字变为 `correct`（首次就答对，响应最快），以及 **Check 按钮被「下一题」控件取代**
+> （任意一次答对，包含重答）。两者互补且幂等。详见
+> [`references/observations.md`](references/observations.md) 第 11 节。
 
 ### 结束页的「本轮每题用时」
 
@@ -235,7 +243,7 @@ pnpm run test            # vitest run
 pnpm run test:watch      # vitest 监听
 pnpm run icons           # 重新生成图标 PNG
 pnpm run verify          # typecheck + test + build + dist 检查
-pnpm run verify:edge     # 真实 Edge 端到端验证（55 项）
+pnpm run verify:edge     # 真实 Edge 端到端验证（60 项）
 pnpm run verify:all      # 上面两个一起跑
 ```
 
@@ -256,7 +264,7 @@ pnpm run verify:all      # 上面两个一起跑
 pnpm run test
 ```
 
-152 个用例，覆盖：
+160 个用例，覆盖：
 
 - **计时引擎**（`tests/timer-engine.test.ts`）：从时间戳计算用时、暂停/继续、
   大跨度时钟跳跃（模拟休眠一小时）、倒计时精确归零时刻、超时只提示一次、
@@ -304,7 +312,7 @@ pnpm run verify:edge
 把 `dist/` 作为解压扩展加载进真实 Edge，打开真实练习页，通过 CDP 驱动，
 直接从面板的 Shadow DOM 读取数值。
 
-**55 项检查**，包括：面板注入与 Shadow DOM 隔离、正计时自动开始、数值随时间增长、
+**60 项检查**，包括：面板注入与 Shadow DOM 隔离、正计时自动开始、数值随时间增长、
 暂停不累积 / 继续恢复、重置归零、**答对即停表**、**确认跳过即停表**、**切题结算并保存记录**、
 **切题后题目标识变化**、**切题后保存记录**、倒计时实时生效、
 **倒计时归零显示超时状态且不跳题**、弹出面板可打开并读写存储、
@@ -317,9 +325,9 @@ pnpm run verify:edge
 | 层级 | 结果 |
 |---|---|
 | `pnpm run typecheck` | 通过 |
-| `pnpm run test` | **152 / 152 通过** |
+| `pnpm run test` | **160 / 160 通过** |
 | `scripts/verify-dist.mjs` | **56 / 56 通过** |
-| `scripts/verify-extension.mjs` | **55 / 55 通过** |
+| `scripts/verify-extension.mjs` | **60 / 60 通过**（另有 1 项因该轮没有加试题而无法判定，会明确标为 inconclusive，不计为通过或失败） |
 
 真实页面上的验证记录、逐步操作与结果见
 [`references/page-inventory.md`](references/page-inventory.md) 与
@@ -347,11 +355,11 @@ khan-academy-timer/
 │   ├── manifest.json
 │   ├── popup.html / popup.css
 │   └── icons/                 # 由 scripts/make-icons.mjs 生成
-├── tests/                     # vitest 单元测试（4 个文件，152 个用例）
+├── tests/                     # vitest 单元测试（4 个文件，160 个用例）
 ├── scripts/
 │   ├── build.mjs              # esbuild 打包到 dist/
 │   ├── verify-dist.mjs        # 构建产物机器校验（56 项）
-│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（55 项）
+│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（60 项）
 │   └── make-icons.mjs         # 生成 PNG 图标（只用 Node 内置模块）
 ├── references/                # ★ 实现前的页面采集资料与脱敏 DOM 样本
 │   ├── collection-report.md   # 采集方法、页面、访问限制

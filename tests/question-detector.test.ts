@@ -29,6 +29,7 @@ import {
 import {
   completionTriggerFor,
   exerciseKeyFromUrl,
+  isQuestionFinished,
   isSummaryPage,
   progressLabel,
   readProgress,
@@ -932,3 +933,76 @@ describe('site-profile: completionTriggerFor', () => {
   });
 });
 
+
+/* ================================================================== *
+ * Finishing a question by a correct RETRY (reported bug)
+ * ================================================================== */
+
+describe('site-profile: isQuestionFinished', () => {
+  const dom = (buttons: string): string => `
+    <div data-testid="content-panel-wrapper">
+      <div class="bibliotron-exercise"><form name="answerform">
+        <div class="perseus-renderer"><div data-perseus-paragraph-index="0">Add. 1+1</div></div>
+      </form></div>
+      <div data-testid="content-library-footer">${buttons}</div>
+    </div>`;
+
+  const CHECK = '<button data-testid="exercise-check-answer">Check</button>';
+  const NEXT = '<button data-testid="exercise-next-question">Next question</button>';
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is false while the question is still answerable', () => {
+    document.body.innerHTML = dom(CHECK);
+    expect(isQuestionFinished(document)).toBe(false);
+  });
+
+  it('is false right after a WRONG answer (Check becomes "Check again")', () => {
+    // The status word goes to "incorrect" but the advance control does not
+    // appear, so the clock must keep running for the retry.
+    document.body.innerHTML = dom('<button data-testid="exercise-check-answer">Check again</button>');
+    expect(isQuestionFinished(document)).toBe(false);
+  });
+
+  it('is true after a correct FIRST answer', () => {
+    document.body.innerHTML = dom(NEXT);
+    expect(isQuestionFinished(document)).toBe(true);
+  });
+
+  it('is true after a correct RETRY, where the status word stays "incorrect"', () => {
+    // This is the reported bug: Khan Academy keeps the first attempt's verdict
+    // in the progress marker, so only the button swap reveals that the learner
+    // eventually got it right.
+    document.body.innerHTML = dom(NEXT);
+    expect(isQuestionFinished(document)).toBe(true);
+  });
+
+  it('is false on the summary screen, where neither control exists', () => {
+    document.body.innerHTML = '<div class="bibliotron-exercise"></div>';
+    expect(isQuestionFinished(document)).toBe(false);
+  });
+
+  it('is false in a transitional state where both controls exist', () => {
+    document.body.innerHTML = dom(`${CHECK}${NEXT}`);
+    expect(isQuestionFinished(document)).toBe(false);
+  });
+});
+
+describe('completionTriggerFor + isQuestionFinished cover both answer paths', () => {
+  it('first-try correct is caught by the status word', () => {
+    expect(completionTriggerFor('correct', 'incomplete', false)).toBe('answered-correct');
+  });
+
+  it('correct retry is NOT caught by the status word, which is why the button check exists', () => {
+    // Khan Academy never reports "correct" here: the marker stays "incorrect".
+    expect(completionTriggerFor('incorrect', 'incomplete', false)).toBeNull();
+    // ...so the button swap has to be the signal.
+    document.body.innerHTML = `
+      <div class="bibliotron-exercise"><form name="answerform"></form></div>
+      <button data-testid="exercise-next-question">Next question</button>`;
+    expect(isQuestionFinished(document)).toBe(true);
+    document.body.innerHTML = '';
+  });
+});
