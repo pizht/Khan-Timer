@@ -292,3 +292,164 @@ tests/question-detector.test.ts
 
 这两条正是需求 5.3「题目识别模块只发出明确事件，由计时引擎决定是否切换计时」与
 验收标准 8.2「切换题目时保存上一题记录，并启动新题计时」要求的行为。
+
+---
+
+## 10. 练习结束与 summary 页面（本轮新增采集）
+
+**方式：** CDP 驱动，连续解出 4 道题并逐题前进，观察最后一题之后的控件变化，然后点击
+页面给出的结束控件。练习为 `addition_4`（4 题、无 bonus question）。
+
+### 10.1 最后一题的按钮：testid 不变，**文案会变，而且有三种**
+
+`exercise-next-question` 这个 testid **始终是同一个「前进」控件**，但它的文案随阶段变化。
+逐题实测 `addition_4` 得到的完整序列：
+
+| 阶段 | 该控件的文案 | 点击后的结果 |
+|---|---|---|
+| 第 1 题答对后 | `Next question` | 进入第 2 题 |
+| 第 2 题答对后 | `Next question` | 进入第 3 题 |
+| 第 3 题答对后 | `Next question` | 进入第 4 题 |
+| **第 4 题答对后** | **`Bonus question`** | **进入加试题，进度索引回到 0** |
+| **加试题答对后** | **`Show summary`** | **进入结束页** |
+
+**两个关键结论：**
+
+1. **不能用 testid 判断「是否最后一题」** —— 三种情形共用一个 testid，只有文案不同。
+   实现里不去区分，统一当作「前进」控件处理，由后续状态决定发生了什么
+   （进度索引变化 → 换题；`answerform` 消失 → 结束页）。
+2. **`addition_4` 是有 bonus question 的** —— 这是本次采集的一个修正：
+   早期把「进度索引 3 → 0」误读为「练习被重做」，实际是**进入了加试题**。
+
+### 10.1.1 加试题会让进度索引倒退
+
+进入加试题后，进度标记重新从 0 开始：
+
+```
+第 4 题答对: currentTestId = exercise-progress-3-correct-current
+点击 Bonus question 后: currentTestId = exercise-progress-0-incomplete-current
+```
+
+因此**进度索引不是单调递增的**，不能把「索引变小」当作「练习重新开始」。
+据此修正了实现：取消「索引倒退即开新一轮」的规则（该规则会在加试题处错误地
+把一轮练习拆成两轮），改为：
+
+- 结束页出现时才结束本轮（`leaveSummary` 清空 run）；
+- 「Try again」重做时，结束页消失 → 自然开始新一轮；
+- 结束页表格**按捕获顺序编号**（第 1 题、第 2 题……），而不是用页面索引编号，
+  这样加试题不会让表格出现两个「第 1 题」；
+- 索引倒退的那一行标记为**「加试」**。
+
+### 10.2 summary 页面的结构（已脱敏）
+
+点击 `Show summary` 后，`form[name="answerform"]` **消失**，进度标记也全部消失，
+但练习外壳仍在。真实结构：
+
+```
+div.bibliotron-exercise
+  header
+    h1[content-library-content-title]  «Add within 1000»
+  div
+    div
+      div
+        div.exercise-chrome-content-for-mobile-zoom
+          div
+            details … «Show»            ← 画板折叠区
+            div[data-testid="eot-phantom-user-registration"]   ← ★ summary 卡片
+              div
+                h1  «Exercise complete!»
+                span «4/4 correct»
+              div
+                h3  «Want to save your progress?»
+                span «Create an account to be able to track your…»
+          div[drawing-area]
+```
+
+### 10.3 summary 的判定：用结构，不用那个 testid
+
+对全部 6 个采集阶段逐一验证如下不变式：
+
+```
+summary ⇔ (无 form[name="answerform"]) 且 (存在 .bibliotron-exercise)
+```
+
+| 阶段 | answerform | 进度标记 | `eot-phantom-user-registration` | bibliotron-exercise | 判定 |
+|---|---|---|---|---|---|
+| 初始 | 有 | 4 | 无 | 有 | 否 |
+| 第 1 题答对 | 有 | 4 | 无 | 有 | 否 |
+| 第 2 题答对 | 有 | 4 | 无 | 有 | 否 |
+| 第 3 题答对 | 有 | 4 | 无 | 有 | 否 |
+| 第 4 题答对 | 有 | 4 | 无 | 有 | 否 |
+| **Show summary 之后** | **无** | **0** | **有** | 有 | **是** |
+
+**为什么不用 `eot-phantom-user-registration` 作为判定依据：**
+该 testid 的字面含义是「end-of-task **phantom user**（未登录用户）registration」，
+即只在**未登录**时出现的注册引导卡片。登录用户看到的结束页面大概率没有这个 testid。
+本次采集全程未登录，因此**无法验证登录态的结构**。
+
+采用结构不变式后，登录态与非登录态都能判定为 summary；插入位置则按
+「summary 卡片 → 练习外壳」的顺序降级，保证登录态也能插入（位置可能不同）。
+`docs/known-limitations.md` 中已如实记录该未验证点。
+
+### 10.4 插入位置
+
+卡片插入到 summary 卡片内部、**评分行之后、注册引导之前**：
+
+```
+div[data-testid="eot-phantom-user-registration"]
+  div            ← 评分行（Exercise complete! / 4/4 correct）
+  ★ 本轮每题用时（扩展注入，Shadow DOM 隔离）
+  div            ← Want to save your progress?
+```
+
+实现上使用「插入到宿主第一个元素之后」，而不是依赖 `_1j9xg4ga` 这类哈希类名；
+若该卡片不存在（例如登录态），则降级为追加到 `.bibliotron-exercise` 末尾。
+
+### 10.5 summary 上的其它观测
+
+- 页脚出现一个 **`Try again`** 按钮（无 testid，靠文案/a11y 匹配），点击即重新开始，
+  开始新一轮。
+- summary 页面上**没有任何进度标记**，也没有 `form[name="answerform"]`，
+  因此题目检测器在这一页只会报告「找不到题目区域」—— 这正是必须单独判定 summary
+  的原因，否则会把结束页误判成识别失败并弹出降级警告。
+- 摘要在同一 URL 下渲染（`/e/addition_4`），**没有发生页面跳转**。
+
+### 10.5.0 结束页的切换**不是原子的**
+
+实测发现，点击 `Show summary`（或最后一题答对后 KA 自行切换）时，DOM 会经过一个
+**中间状态**：
+
+| 时刻 | `form[name="answerform"]` | 进度标记 |
+|---|---|---|
+| 切换中 | **已消失** | **仍然存在** |
+| 切换完成 | 已消失 | 已消失 |
+
+在中间状态下，`isSummaryPage()`（要求「无答题表单」**且**「无进度标记」）会返回
+`false`；只有等到进度标记也被移除后才返回 `true`。
+
+**对实现的影响：**结束页检测必须**反复检查**（本实现每 700 ms 一次），
+不能只检查一次。验证脚本也因此改为轮询等待结束页稳定，而不是单次判断 ——
+单次判断会偶发地卡在这个中间状态上，把一次正常的结束误报为「没到达结束页」。
+
+### 10.5.1 「加试题」阶段的不变式
+
+用同一套判定跑「进入加试题」这一步，结果仍是 **否**（有 `answerform`、有进度标记），
+因此不会被误判为结束页。加试题与普通题共用同一套题目区域与进度标记结构，
+计时与识别行为一致。
+
+### 10.6 Skip 确认流程（复核）
+
+| 步骤 | 观测结果 |
+|---|---|
+| 点击 `exercise-skip-button` | 弹出确认框：`Are you sure? Skipped questions will count as incorrect.` |
+| 确认框按钮 | `[aria-label="Close modal"]`、`Yes, skip`、`Cancel` |
+| 点击 `Yes, skip` | 进度状态由 `incomplete` → `incorrect`；提示/分步解答自动展开 |
+| 点击 `Yes, skip` 后的前进 | **没有**自动跳到下一题；按钮仍是 `exercise-check-answer`，需再作答才出现 `Next question` |
+
+**对实现的影响：**
+
+1. 只有**确认**跳过才算跳过。实现中把「点击 Skip」与「题目状态离开 `incomplete`」
+   两个条件合起来判断，因此点 `Cancel` 不会停表。
+2. 由于跳过之后仍需作答才能前进，可能出现在同一题上「先跳过、再答对」的情况。
+   实现中第一完成原因胜出（记录为 `skipped`），不会为同一题产生两条记录。
+

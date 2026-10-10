@@ -269,6 +269,27 @@ export class QuestionChangeDecider {
 export interface DetectorCallbacks {
   onEvent: (event: DetectionEvent, snapshot: QuestionSnapshot) => void;
   onDiagnostics?: (info: DetectorDiagnostics) => void;
+  /**
+   * The current question's progress STATE changed while its INDEX did not.
+   *
+   * On Khan Academy the progress marker is
+   * `exercise-progress-<index>-<state>[-current]`, so this fires when the
+   * learner answers or skips the question they are already on:
+   * `incomplete -> correct`, `incomplete -> incorrect`, and so on.
+   * The detector only reports it; deciding what it means for the timer is the
+   * controller's job (spec 5.3).
+   */
+  onProgressStateChange?: (change: ProgressStateChange) => void;
+}
+
+export interface ProgressStateChange {
+  /** The new state word, e.g. "correct" / "incorrect". */
+  state: string;
+  /** The previous state word, or null if this is the first observation. */
+  previous: string | null;
+  /** Zero-based question index the state belongs to. */
+  index: number;
+  snapshot: QuestionSnapshot;
 }
 
 export interface DetectorDiagnostics {
@@ -538,6 +559,17 @@ export class QuestionDetector {
   private poll(): void {
     this.pollTicks += 1;
     if (this.stopped) return;
+
+    // The progress marker lives in the exercise footer, which can appear AFTER
+    // the question region during a real page load. Without this the progress
+    // observer would never be created, and "answered" / "skipped" state changes
+    // would only be noticed by luck. Re-binding is cheap and self-healing.
+    if (!this.progressObserver) {
+      this.attachRegion();
+      this.evaluate('progress-observer-attached');
+      return;
+    }
+
     if (location.href !== this.lastUrl) {
       this.lastUrl = location.href;
       // A hard navigation to a different page invalidates all detection state.
@@ -564,7 +596,25 @@ export class QuestionDetector {
       this.evaluate('pending-candidate');
       return;
     }
+    // Safety net, kept deliberately cheap: read only the progress marker (a
+    // handful of DOM reads) and run the full evaluation — which clones the
+    // question region to fingerprint it — only when the marker actually moved.
+    // A missed observer therefore cannot stall detection, without paying for a
+    // fingerprint on every idle poll.
+    if (this.progressMovedSinceLastEvaluation()) {
+      this.evaluate('poll-progress-changed');
+      return;
+    }
     this.emitDiagnostics(false, 'poll');
+  }
+
+  /** Has the progress marker changed since the last full evaluation? */
+  private progressMovedSinceLastEvaluation(): boolean {
+    const progress = readProgress(document);
+    if (!progress) return false;
+    return (
+      progress.state !== this.lastProgressState || progress.index !== this.lastProgressIndex
+    );
   }
 
   private progressContainer: Element | null = null;
@@ -616,6 +666,7 @@ export class QuestionDetector {
     // 3. A stem fingerprint, used only when no progress marker exists. That is
     //    an unverified page type, so the overlay reports reduced confidence.
     const progressInfo = readProgress(document);
+    this.currentProgress = progressInfo;
     const progress = progressLabel(progressInfo);
     notes.push(
       progressInfo
@@ -652,6 +703,9 @@ export class QuestionDetector {
   private lastNotes: string[] = [];
   private lastErrors: string[] = [];
   private lastProgressRaw: string | null = null;
+  private currentProgress: ReturnType<typeof readProgress> = null;
+  private lastProgressState: string | null = null;
+  private lastProgressIndex: number | null = null;
   private lastSnapshot: QuestionSnapshot | null = null;
   private pollTicks = 0;
   private mutationCallbacks = 0;
@@ -670,8 +724,48 @@ export class QuestionDetector {
     this.lastSnapshot = snapshot;
     const event = this.decider.observe(snapshot);
     this.callbacks.onEvent(event, snapshot);
+    this.reportProgressStateChange(event, snapshot);
     this.armPendingConfirmation(event);
     this.emitDiagnostics(true, `evaluate: ${reason}`);
+  }
+
+  /**
+   * Report a state change on the question we are already on.
+   *
+   * A change of INDEX means a different question and is handled by the decider;
+   * this only fires when the index stayed the same but the state word moved, so
+   * it never overlaps with `question-changed`.
+   */
+  private reportProgressStateChange(
+    event: DetectionEvent,
+    snapshot: QuestionSnapshot,
+  ): void {
+    const progress = this.currentProgress;
+    if (event.type === 'question-changed') {
+      // A new question: reseed the baseline without reporting a state change.
+      this.lastProgressIndex = progress?.index ?? null;
+      this.lastProgressState = progress?.state ?? null;
+      return;
+    }
+    if (!progress) return;
+
+    // Capture the baseline BEFORE overwriting it.
+    const previous = this.lastProgressState;
+    const previousIndex = this.lastProgressIndex;
+    this.lastProgressIndex = progress.index;
+    this.lastProgressState = progress.state;
+
+    // Only a state change on the SAME question is interesting here. A first
+    // observation (previous === null) is a baseline, not a change.
+    if (previous === null || previous === progress.state) return;
+    if (previousIndex !== null && previousIndex !== progress.index) return;
+
+    this.callbacks.onProgressStateChange?.({
+      state: progress.state,
+      previous,
+      index: progress.index,
+      snapshot,
+    });
   }
 
   /**
@@ -686,11 +780,19 @@ export class QuestionDetector {
    * old question's timer kept running.
    */
   private armPendingConfirmation(event: DetectionEvent): void {
-    if (this.pendingTimer !== null) {
-      window.clearTimeout(this.pendingTimer);
-      this.pendingTimer = null;
+    if (event.type !== 'pending') {
+      // Nothing is awaiting confirmation: drop any scheduled follow-up.
+      if (this.pendingTimer !== null) {
+        window.clearTimeout(this.pendingTimer);
+        this.pendingTimer = null;
+      }
+      return;
     }
-    if (event.type !== 'pending') return;
+    // Already scheduled. Deliberately NOT pushed back: re-arming on every
+    // pending event would starve the follow-up indefinitely whenever mutations
+    // arrive faster than the de-bounce window, and the change would never
+    // commit.
+    if (this.pendingTimer !== null) return;
     const { debounceMs } = this.decider.getOptions();
     this.pendingTimer = window.setTimeout(() => {
       this.pendingTimer = null;

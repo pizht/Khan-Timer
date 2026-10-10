@@ -25,7 +25,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 
 | # | 验收项 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（32/32）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `README.md` → 安装到 Edge。 |
+| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（55/55）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `README.md` → 安装到 Edge。 |
 | 2 | 在目标 Khan Academy 页面显示悬浮计时面板 | ✅ | 检查项 `content script injects the panel host`、`panel is visible`、`the detected question is reported in the panel`（实测 `进度 1 of 4 识别：题目ID`）。截图 `references/screenshots/overlay-countup.png`。 |
 | 3 | 面板可正常折叠/展开或以已约定方式隐藏 | ✅ | 收集 `onToggleCollapse` → 折叠为小胶囊；截图 `references/screenshots/overlay-collapsed.png`。另有弹出面板的「在页面上显示悬浮面板」总开关。 |
 | 4 | 面板操作不会触发题目识别器错误重置计时 | ✅ | 面板挂在 `document.body` 的 Shadow DOM 宿主 `#khan-academy-timer-host` 内，位于题目区域之外；检测器的指纹计算还会剔除该宿主与 `[role="dialog"]`/`[aria-live]`。端到端实测：连续点击暂停/继续/重置后，`reset is reported in the panel footer`（`题目未变化，计时继续`）——重置未被识别为切题。单元测试 `typing an answer into the widget is NOT a question change` 等同类回归用例共 4 条。 |
@@ -48,7 +48,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | # | 验收项 | 状态 | 证据 |
 |---|---|---|---|
 | 1 | 对已验证的每种页面类型，至少测试连续完成 10 次题目切换 | ❌ **未满足** | 实际完成 **3 次**连续切题（未加载扩展的交互采集，进度索引 0→1→2→3，见 `references/observations.md` 第 1 节）与 **1 次**（加载扩展的端到端）。用于验证的练习只有 4 题且每次切题须先答对，自动化上限受题量限制。**如实记录于 `docs/known-limitations.md` 第 1 条。** |
-| 2 | 输入答案、打开提示、显示答题反馈、展开辅助内容时，不应无条件重置题目计时 | ✅ | 4 条专门回归用例（`tests/question-detector.test.ts` → `REGRESSION — auxiliary content must not reset the timer`）：输入答案、答错浮层、**提示展开使区域文本 3.5 KB→23 KB**、无进度标记时的反馈浮层。另有端到端实测 `REGRESSION: submitting an answer does NOT reset the timer`（计时持续增长 `0:00 → 0:04`）。真实观测依据见 `references/observations.md` 第 2、3、4 节。 |
+| 2 | 输入答案、打开提示、显示答题反馈、展开辅助内容时，不应无条件重置题目计时 | ✅ | 4 条专门回归用例（`tests/question-detector.test.ts` → `REGRESSION — auxiliary content must not reset the timer`）：输入答案、答错浮层、**提示展开使区域文本 3.5 KB→23 KB**、无进度标记时的反馈浮层。端到端另有实测：**答对后停表**（`answering correctly stops the timer`）与**答错后继续计时**（答错时不停表，可重试）。真实观测依据见 `references/observations.md` 第 2、3、4 节。 |
 | 3 | 无法可靠识别时提供可见提示或可用的手动恢复方式 | ✅ | 检测器发出 `uncertain` 后：面板显示黄色警告（`无法可靠识别题目变化（question region not found）。计时保持不变，可用"重置本题"手动开始。`）、「识别」一栏显示 `未识别/弱信号`、页脚显示 `识别不确定`，并保留「重置本题」「暂停」按钮。截图 `references/screenshots/overlay-degraded-unrecognised.png`。单元测试 `degrades conservatively when no question region is found`、`keeps the current timer when the identity disappears mid-question`。 |
 | 4 | 验收清单明确列出已验证支持和未验证的页面类型 | ✅ | `docs/compatibility.md`（验收视角）与 `references/page-inventory.md`（研究视角），按 `Edge-verified` / `Automated-tested` / `Observed` / `Unverified` 四级列明。 |
 
@@ -63,6 +63,40 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 5 | 扩展权限与本项目范围一致 | ✅ | 只声明 `storage` 与 `activeTab`；`verify-dist.mjs` 断言权限在允许清单内、**无** `host_permissions`、**无** `optional_permissions`、**无** background worker、**无** `web_accessible_resources`，且内容脚本只匹配 `khanacademy.org`（拒绝 `<all_urls>`）。权限逐条用途见 `README.md` → 权限说明。 |
 
 **8.4 小结：5 / 5 满足。8.1：4 / 4。8.2：8 / 8。8.3：3 / 4（连续 10 次切题未满足）。**
+
+---
+
+## 追加需求（本轮变更）
+
+在本文件原有的验收标准之外，用户又提出三项行为变更。它们与验收标准的
+8.2（计时功能）和 8.3（识别与兼容性）直接相关，因此一并记录。
+
+| # | 需求 | 状态 | 证据 |
+|---|---|---|---|
+| 1 | 点击 Skip 后停止本题计时 | ✅ | 只有**确认**跳过才停表（点 Cancel 不停）。真实 Edge 端到端：`skip asks for confirmation first`、`the skip confirmation can be triggered`、`confirming a skip stops the timer`（`0:04 → 0:05`，随后 3.5 s 保持不变）、`answering after a skip does not resume the stopped timer`。规则由纯函数 `completionTriggerFor()` 实现，单元测试覆盖「答错不停」「确认跳过才停」「取消不停」等 6 种情形。 |
+| 2 | 点击 Check 判定正确后停止本题计时 | ✅ | 真实 Edge：`the page accepted the correct answer`（`state=correct`）、`answering correctly stops the timer`（`status-finished`）、`the panel shows the completed state`、`the pause control is disabled once the question is done`、`the frozen value does not creep upwards afterwards`（3.5 s 后仍为 `0:04`）。答错时**不停表**（可重试），由 `completionTriggerFor()` 与单元测试保证。 |
+| 3 | 做完所有题后点击 `Show summary`，在结束页显示本轮每题用时 | ✅ | 真实 Edge：`the end-of-exercise summary screen is reached`、`the summary card is injected`、`the summary lists every question of this run`、`each summary row shows a duration`、`the summary shows a total`、`the summary marks the skipped question`。实测卡片内容：`本轮每题用时 / 共 3 题 · 合计 0:15 / 第 1 题答对 0:04 / 第 2 题已跳过 0:05 / 第 3 题 0:06`。 |
+
+### 相关的采集与设计修正
+
+- **发现 `addition_4` 有 bonus question。** 最后一道普通题之后的控件文案是
+  `Bonus question`（进入加试题，进度索引回到 0），加试题之后才是 `Show summary`。
+  这一发现修正了早期「索引倒退＝练习重做」的误读，并已在
+  `references/observations.md` 第 10.1、10.1.1 节更正。
+- **结束页表格按答题顺序编号**，索引倒退的那一行标记为「加试」，
+  避免表格里出现两个「第 1 题」。
+- **结束页判定用结构不变式**（无答题表单 + 练习外壳仍在），不依赖只在未登录时出现的
+  `eot-phantom-user-registration`。登录态的插入位置未验证，见已知限制第 15 条。
+
+### 本轮修复的真实缺陷（均由真实 Edge 验证发现）
+
+| 缺陷 | 症状 | 修复 | 回归测试 |
+|---|---|---|---|
+| 进度观察器未绑定 | 页脚在题目区域之后才出现，观察器从未创建；「答对/跳过」的状态变化只能靠偶发的区域变更被发现，导致记录整条丢失 | `poll()` 在观察器缺失时补绑定 | `attaches the progress observer even when the footer appears late` |
+| 去抖复核可被饿死 | 每次 `pending` 事件都重排复核定时器，变更可能永不提交 | 已排队就不再重排 | `confirms a pending change even when mutations keep arriving (no starvation)` |
+| 首次提交对错读不到 | 用 350 ms 定时器读反馈，早于页面更新，记录里对错全是 `unknown` | 改用进度状态变化作为权威信号 | `readSubmissionOutcome` 系列 + 端到端 `outcome: "correct"` |
+| 加载中误判结束页 | 页面尚未渲染题目时「无答题表单 + 有练习外壳」成立，被当成结束页 | 必须真的计时过一道题才允许进入结束页 | `isSummaryPage` 系列 |
+| 僵留的待写记录阻塞下一题 | 一旦漏检一次切题，上一题的待写记录会让下一题无法结算，整行丢失 | 索引不同则先落盘旧记录再结算新题 | 由端到端记录数验证 |
 
 ---
 
@@ -137,7 +171,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 103 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 152 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

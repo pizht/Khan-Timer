@@ -245,6 +245,7 @@ references/
 │   ├── overlay-countdown-expired.png       # 倒计时归零的超时状态（面板变红）
 │   ├── overlay-collapsed.png               # 折叠为小胶囊
 │   ├── overlay-degraded-unrecognised.png   # 识别不确定时的保守降级与可见提示
+│   ├── summary-per-question-times.png      # 结束页的「本轮每题用时」卡片
 │   └── popup-settings.png                  # 扩展弹出面板
 ├── snapshots/
 │   ├── exercise-initial-question-region.html
@@ -261,8 +262,22 @@ references/
     ├── cdp-probe.mjs                 # 通过 CDP 驱动真实交互并对比前后 DOM
     ├── cdp-extension-diagnostics.mjs # 加载扩展后读出检测器诊断（排查「面板卡住」）
     ├── sanitize-snapshots.py         # 从原始抓取提取脱敏局部样本
-    └── capture-with-extension.mjs    # 加载扩展后截图
+    ├── capture-with-extension.mjs    # 加载扩展后截图（悬浮面板 / 弹出面板）
+    └── capture-summary.mjs           # 做完整套题并在结束页截图「本轮每题用时」
 ```
+
+### 2.7 驱动整套练习到结束页
+
+```bash
+node references/tools/capture-summary.mjs <exerciseUrl> <outDir>
+```
+
+这条命令会自动解出每一题、确认页面判定为「正确」、逐题前进，直到 `Show summary`，
+然后在结束页截图。它也是发现 **`addition_4` 有 bonus question** 的手段：
+第 4 题之后控件的文案是 `Bonus question`（不是 `Show summary`），点击后进度索引回到 0。
+
+> 补充观测：另一次运行里第 4 题之后直接出现了 `Show summary`，**没有**加试题。
+> 说明加试题是否出现并不固定，实现不能假设一定没有或一定有。
 
 > `capture-dom.sh` 需要显式指定输出路径；用法：
 >

@@ -55,7 +55,40 @@
 | 12 | 刷新页面 | 设置仍然保留 | 设置持久化（`chrome.storage.local`） | ✅ |
 
 **汇总：12 / 12 通过。** 脚本另有 18 项结构性检查（面板注入、Shadow DOM 隔离、
-诊断信息完整等），合计 **32 / 32 通过**。
+诊断信息完整等），合计 **55 / 55 通过**。
+
+### 1.2 本轮追加验证的三项行为
+
+用户在本轮提出三项行为变更，均已在真实 Edge 上验证通过（合计 55/55 项检查）。
+
+| # | 行为 | 验证项 | 结果 |
+|---|---|---|---|
+| 1 | **确认 Skip 后停止本题计时** | `skip asks for confirmation first`、`the skip confirmation can be triggered`、`confirming a skip stops the timer`、`answering after a skip does not resume the stopped timer`、`the skipped question can be advanced past` | ✅ 跳过确认后数值冻结（`0:04 → 0:05` 后保持不变）；点 Cancel 不停表 |
+| 2 | **答对后停止本题计时** | `the page accepted the correct answer`、`answering correctly stops the timer`、`the panel shows the completed state`、`the pause control is disabled once the question is done`、`the frozen value does not creep upwards afterwards` | ✅ 面板转 `已完成`、暂停按钮禁用、3.5 s 后仍为 `0:04`；答错时**不停表**（可重试） |
+| 3 | **结束页显示本轮每题用时** | `the end-of-exercise summary screen is reached`、`the summary card is injected`、`the summary lists every question of this run`、`each summary row shows a duration`、`the summary shows a total`、`the summary marks the skipped question`、`the summary tags the bonus question`、`the summary does not print any tag twice`、`all saved records belong to a single run`、`the summary shows exactly the records saved for this run`、`every record carries a question outcome` | ✅ 结束页出现「本轮每题用时」卡片，行数与本轮保存的记录数一致 |
+
+实测卡片内容（一次完整的 4 题 + 1 加试题）：
+
+```
+本轮每题用时        共 5 题 · 合计 0:19
+第 1 题 答对   正计时   0:04
+第 2 题 已跳过  正计时   0:05
+第 3 题 答对   正计时   0:03
+第 4 题 答对   正计时   0:03
+第 5 题 加试   正计时   0:03
+```
+
+### 1.3 本轮采集修正：`addition_4` 有 bonus question
+
+驱动整轮时发现最后一道普通题之后的控件文案是 **`Bonus question`**（不是
+`Show summary`），点击后**进度索引回到 0**，做完加试题才出现 `Show summary`。
+
+这修正了早期「索引倒退＝练习重做」的误读。实现上：
+
+- 结束页表格**按答题顺序编号**（第 1、2、3…题），不使用页面索引，
+  因此不会出现两个「第 1 题」；
+- 索引倒退的那一行标记为「加试」；
+- 不再把索引倒退当作新一轮的开始。
 
 ### 重要限制：连续切题次数不足
 
@@ -118,7 +151,7 @@
 
 | 等级 | 本项目对应的具体对象 | 凭据 |
 |---|---|---|
-| `Edge-verified` | 练习页 `addition_4`：面板注入、正计时自动开始、暂停/继续/重置、**答题不重置计时**、**切题重置计时并保存记录**、倒计时超时状态、弹出面板读写存储、清除记录 | `scripts/verify-extension.mjs` 输出，32/32 |
+| `Edge-verified` | 练习页 `addition_4`：面板注入、正计时自动开始、暂停/继续/重置、**答对即停表**、**确认跳过即停表**、**提示展开不重置计时**、切题结算并保存记录、**结束页「本轮每题用时」**、倒计时超时状态、弹出面板读写存储、清除记录 | `scripts/verify-extension.mjs` 输出，55/55 |
 | `Automated-tested` | 练习页 `addition_4`：进度索引 0→1→2→3、答题前后区域文本一致、反馈浮层位置、提示展开导致区域文本 3.5 KB→23 KB 而索引不变 | `references/observations.md` 第 1、2、3 节 |
 | `Observed` | 练习 `rounding-to-the-nearest-ten-or-hundred`、测验 `quiz-1` 的首屏 DOM | `references/collection-report.md` 第 2 节、`references/snapshots/` |
 | `Unverified` | 本文件第二、三节列出的全部内容 | — |
@@ -131,7 +164,7 @@ Khan Academy 更新页面后，兼容性可能失效。重新验收只需两条�
 
 ```bash
 pnpm run verify                        # 类型 + 单元测试 + 构建 + 产物检查
-pnpm run verify:edge                    # 真实 Edge 端到端（32 项）
+pnpm run verify:edge                    # 真实 Edge 端到端（55 项）
 ```
 
 若第二条命令出现失败，输出会直接给出失败的检查项与实测值，便于定位是哪一个

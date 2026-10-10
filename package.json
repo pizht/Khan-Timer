@@ -11,7 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run typecheck && npm run test && npm run build && node scripts/verify-dist.mjs",
-    "verify:edge": "node scripts/verify-extension.mjs",
+    "verify:edge": "npm run build && node scripts/verify-extension.mjs",
     "verify:all": "npm run verify && npm run verify:edge",
     "icons": "node scripts/make-icons.mjs"
   },

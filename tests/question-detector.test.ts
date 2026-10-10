@@ -27,7 +27,9 @@ import {
   identityKeyOf,
 } from '../src/question-detector.js';
 import {
+  completionTriggerFor,
   exerciseKeyFromUrl,
+  isSummaryPage,
   progressLabel,
   readProgress,
   readSubmissionOutcome,
@@ -420,6 +422,57 @@ describe('QuestionDetector — DOM adapter', () => {
     expect(detector.getCurrentKey()).toBe('id:progress:2 of 4');
   });
 
+  it('confirms a pending change even when mutations keep arriving (no starvation)', () => {
+    // REGRESSION: the follow-up used to be re-armed on every pending event, so
+    // a steady stream of mutations faster than the de-bounce window could
+    // postpone it forever and the change never committed.
+    start(khanDom({ progressIndex: 0 }));
+    document
+      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
+      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
+    document
+      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
+      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
+
+    vi.setSystemTime(T0 + 10_000);
+    detector.reevaluate('advance-1');
+    expect(last()).toMatchObject({ type: 'pending' });
+
+    // Keep poking the detector well inside the de-bounce window. Each poke is
+    // another pending observation that must NOT push the follow-up back.
+    //
+    // Note: `vi.advanceTimersByTime` is used rather than `vi.setSystemTime`
+    // because sinon's `setSystemTime` SHIFTS pending timers by the same delta,
+    // which would move the follow-up forward and mask the starvation bug.
+    for (let i = 1; i <= 12; i += 1) {
+      vi.advanceTimersByTime(30);
+      detector.reevaluate(`poke-${i}`);
+      expect(last()).toMatchObject({ type: 'pending' });
+    }
+
+    // The originally scheduled follow-up still fires on time (armed at
+    // +10_000 for +460ms; we are now at +10_360ms).
+    vi.advanceTimersByTime(200);
+    expect(events.some((e) => e.type === 'question-changed' && e.reason === 'stable-change')).toBe(true);
+  });
+
+  it('cancels the follow-up once the candidate resolves back to the current question', () => {
+    start(khanDom({ progressIndex: 0 }));
+    const cell = document.querySelector('[data-testid="exercise-progress-0-incomplete-current"]');
+    cell?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
+    vi.setSystemTime(T0 + 10_000);
+    detector.reevaluate('flake-1');
+    expect(last()).toMatchObject({ type: 'pending' });
+    // The page settles back to the original question before the window closes.
+    cell?.setAttribute('data-testid', 'exercise-progress-0-incomplete-current');
+    vi.setSystemTime(T0 + 10_100);
+    detector.reevaluate('flake-2');
+    expect(last()).toMatchObject({ type: 'same-question' });
+    const changesBefore = events.filter((e) => e.type === 'question-changed').length;
+    vi.advanceTimersByTime(5000);
+    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(changesBefore);
+  });
+
   it('does not keep re-evaluating once a candidate is resolved', () => {
     start(khanDom({ progressIndex: 0 }));
     document
@@ -648,3 +701,234 @@ describe('site-profile: exerciseKeyFromUrl', () => {
     expect(exerciseKeyFromUrl('not a url')).toBe('not a url');
   });
 });
+
+/* ================================================================== *
+ * Progress STATE changes (same question, different state word)
+ * ================================================================== */
+
+describe('QuestionDetector — progress state changes', () => {
+  let detector: QuestionDetector;
+  let events: DetectionEvent[];
+  let stateChanges: { state: string; previous: string | null; index: number }[];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+    document.body.innerHTML = khanDom({ progressIndex: 0, progressState: 'incomplete' });
+    events = [];
+    stateChanges = [];
+    detector = new QuestionDetector(
+      {
+        onEvent: (event) => events.push(event),
+        onProgressStateChange: (change) =>
+          stateChanges.push({ state: change.state, previous: change.previous, index: change.index }),
+      },
+      { debounceMs: 400, cooldownMs: 1200 },
+    );
+    detector.start();
+  });
+
+  afterEach(() => {
+    detector?.stop();
+    vi.useRealTimers();
+    document.body.innerHTML = '';
+  });
+
+  const setCurrentState = (state: string): void => {
+    document
+      .querySelector('[data-testid$="-current"]')
+      ?.setAttribute('data-testid', `exercise-progress-0-${state}-current`);
+  };
+
+  it('does not report a change for the first observation (baseline only)', () => {
+    expect(stateChanges).toHaveLength(0);
+  });
+
+  it('attaches the progress observer even when the footer appears late', () => {
+    // REGRESSION: on a real page load the exercise footer (which holds the
+    // progress marker) appears AFTER the question region. The observer was only
+    // bound when something detached, so it was never created and answer/skip
+    // state changes were missed.
+    detector.stop();
+    document.body.innerHTML = `
+      <div data-testid="content-panel-wrapper">
+        <div class="framework-perseus"><form name="answerform">
+          <div class="perseus-renderer"><div class="paragraph" data-perseus-paragraph-index="0">Add. 1+1</div></div>
+        </form></div>
+      </div>`;
+    events = [];
+    stateChanges = [];
+    detector = new QuestionDetector(
+      {
+        onEvent: (event) => events.push(event),
+        onProgressStateChange: (change) =>
+          stateChanges.push({ state: change.state, previous: change.previous, index: change.index }),
+      },
+      { debounceMs: 400, cooldownMs: 1200 },
+    );
+    detector.start();
+    // No footer yet: nothing to read, and no crash.
+    expect(events.length).toBeGreaterThan(0);
+
+    // The footer renders a moment later, as it does on the real site.
+    const footer = document.createElement('div');
+    footer.setAttribute('data-testid', 'content-library-footer');
+    footer.innerHTML = `
+      <div><div data-testid="exercise-progress-0-incomplete-current"></div></div>
+      <div><div data-testid="exercise-progress-1-incomplete"></div></div>`;
+    document.querySelector('[data-testid="content-panel-wrapper"]')?.append(footer);
+
+    // The poll interval must notice and bind the observer.
+    vi.advanceTimersByTime(700);
+    expect(stateChanges).toHaveLength(0); // baseline only, no spurious change
+
+    // Now a state change on the same question must be reported.
+    document
+      .querySelector('[data-testid$="-current"]')
+      ?.setAttribute('data-testid', 'exercise-progress-0-correct-current');
+    vi.advanceTimersByTime(1400);
+    expect(stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('reports an answered-correct state change on the same question', () => {
+    setCurrentState('correct');
+    vi.setSystemTime(T0 + 3000);
+    detector.reevaluate('after-answer');
+    expect(stateChanges).toEqual([{ state: 'correct', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('reports an incorrect state change (wrong answer) on the same question', () => {
+    setCurrentState('incorrect');
+    vi.setSystemTime(T0 + 3000);
+    detector.reevaluate('after-wrong-answer');
+    expect(stateChanges).toEqual([{ state: 'incorrect', previous: 'incomplete', index: 0 }]);
+  });
+
+  it('does not report a state change when the state is unchanged', () => {
+    vi.setSystemTime(T0 + 1000);
+    detector.reevaluate('no-change');
+    vi.setSystemTime(T0 + 2000);
+    detector.reevaluate('still-no-change');
+    expect(stateChanges).toHaveLength(0);
+  });
+
+  it('reports each state transition once, not once per evaluation', () => {
+    setCurrentState('correct');
+    vi.setSystemTime(T0 + 3000);
+    detector.reevaluate('answer-1');
+    vi.setSystemTime(T0 + 3500);
+    detector.reevaluate('answer-2');
+    vi.setSystemTime(T0 + 4000);
+    detector.reevaluate('answer-3');
+    expect(stateChanges).toHaveLength(1);
+  });
+
+  it('does not report a state change when the question INDEX moves', () => {
+    // Advance: index 0 -> 1. The state word also flips back to "incomplete",
+    // which must be treated as a new baseline, not a state change.
+    document
+      .querySelector('[data-testid="exercise-progress-0-incomplete-current"]')
+      ?.setAttribute('data-testid', 'exercise-progress-0-correct');
+    document
+      .querySelector('[data-testid="exercise-progress-1-incomplete"]')
+      ?.setAttribute('data-testid', 'exercise-progress-1-incomplete-current');
+    vi.setSystemTime(T0 + 10_000);
+    detector.reevaluate('advance-seen');
+    vi.setSystemTime(T0 + 10_500);
+    detector.reevaluate('advance-confirmed');
+    expect(events.some((e) => e.type === 'question-changed')).toBe(true);
+    expect(stateChanges).toHaveLength(0);
+  });
+});
+
+/* ================================================================== *
+ * Summary page detection
+ * ================================================================== */
+
+describe('site-profile: isSummaryPage', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is false while a question is showing', () => {
+    document.body.innerHTML = khanDom({ progressIndex: 0 });
+    expect(isSummaryPage(document)).toBe(false);
+  });
+
+  it('is false after answering while the question is still on screen', () => {
+    document.body.innerHTML = khanDom({ progressIndex: 3, progressState: 'correct' });
+    expect(isSummaryPage(document)).toBe(false);
+  });
+
+  it('is true on the end-of-exercise summary screen', () => {
+    // The shape actually captured from the live site after the last question:
+    // no answer form, no progress markers, exercise chrome still present.
+    document.body.innerHTML = `
+      <div data-testid="content-panel-wrapper">
+        <div class="bibliotron-exercise">
+          <div class="exercise-chrome-content-for-mobile-zoom">
+            <div data-testid="eot-phantom-user-registration">
+              <div><h1>Exercise complete!</h1><span>4/4 correct</span></div>
+              <div><h3>Want to save your progress?</h3></div>
+            </div>
+          </div>
+          <div data-testid="drawing-area"></div>
+        </div>
+      </div>
+    `;
+    expect(isSummaryPage(document)).toBe(true);
+  });
+
+  it('is false when the exercise chrome is gone entirely (e.g. a course page)', () => {
+    document.body.innerHTML = '<div><h1>Course page</h1></div>';
+    expect(isSummaryPage(document)).toBe(false);
+  });
+
+  it('is false when only the answer form is missing but progress markers remain', () => {
+    // Guards against treating a transient mid-render state as the summary.
+    document.body.innerHTML = `
+      <div class="bibliotron-exercise">
+        <div data-testid="exercise-progress-0-incomplete-current"></div>
+      </div>
+    `;
+    expect(isSummaryPage(document)).toBe(false);
+  });
+});
+
+/* ================================================================== *
+ * When the current question stops being timed (requirements 1 and 2)
+ * ================================================================== */
+
+describe('site-profile: completionTriggerFor', () => {
+  it('stops on a correct answer, whether or not Skip was ever opened', () => {
+    expect(completionTriggerFor('correct', 'incomplete', false)).toBe('answered-correct');
+    expect(completionTriggerFor('correct', 'incomplete', true)).toBe('answered-correct');
+    expect(completionTriggerFor('correct', 'incorrect', false)).toBe('answered-correct');
+  });
+
+  it('does NOT stop on a wrong answer, so the learner can retry', () => {
+    expect(completionTriggerFor('incorrect', 'incomplete', false)).toBeNull();
+  });
+
+  it('stops when a skip is confirmed', () => {
+    // Khan Academy marks a skipped question "incorrect" without a submission.
+    expect(completionTriggerFor('incorrect', 'incomplete', true)).toBe('skipped');
+  });
+
+  it('does not stop when a skip dialog was opened and then cancelled', () => {
+    // Cancelling leaves the question untouched: the state never moved.
+    expect(completionTriggerFor('incomplete', 'incomplete', true)).toBeNull();
+  });
+
+  it('does not re-stop a question that already moved on', () => {
+    // previous is no longer "incomplete", so this is not a fresh completion.
+    expect(completionTriggerFor('incorrect', 'incorrect', true)).toBeNull();
+    expect(completionTriggerFor('skipped', 'incorrect', true)).toBeNull();
+  });
+
+  it('ignores states it does not know', () => {
+    expect(completionTriggerFor('incomplete', 'incomplete', false)).toBeNull();
+    expect(completionTriggerFor('unseen', 'incomplete', false)).toBeNull();
+  });
+});
+

@@ -42,6 +42,10 @@ const common = {
   platform: 'browser',
   sourcemap: true,
   minify: false,
+  // Emit real UTF-8 rather than esbuild's default \uXXXX escapes: the whole
+  // point of shipping an unminified bundle is that a reviewer can read it and
+  // confirm nothing leaves the machine (spec 8.4).
+  charset: 'utf8',
   legalComments: 'none',
   logLevel: 'info',
   define: { 'process.env.NODE_ENV': '"production"' },

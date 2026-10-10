@@ -69,6 +69,8 @@ async function openTarget(url) {
   });
   const cdp = new Cdp(ws);
   await cdp.send('Runtime.enable');
+  // Exposed so callers can close the tab they opened.
+  cdp.targetId = target.id;
   return cdp;
 }
 
@@ -157,12 +159,15 @@ const READ_PANEL = `(() => {
     pillTime: norm(q('pill-time')?.textContent),
     mode: norm(q('mode')?.textContent),
     pauseLabel: norm(q('pause')?.textContent),
+    pauseDisabled: q('pause') ? q('pause').disabled : null,
     meta: norm(q('meta')?.textContent),
     warning: q('warning') && !q('warning').hidden ? norm(q('warning').textContent) : null,
     footer: norm(footer?.textContent),
     statusClass: panel ? Array.from(panel.classList).filter((c) => c.startsWith('status-')).join(',') : null,
     collapsed: q('pill') ? q('pill').style.display !== 'none' : null,
     visible: host.style.display !== 'none',
+    hostDisplay: host.style.display,
+    statusClasses: panel ? Array.from(panel.classList).join(' ') : null,
   };
 })()`;
 
@@ -173,6 +178,85 @@ const clickPanel = (role) => `(() => {
   if (!el) return false;
   el.click();
   return true;
+})()`;
+
+/**
+ * Shared page-side normalisation snippet.
+ *
+ * `String.raw` matters: inside a plain template literal `\s` collapses to `s`,
+ * which would turn `/\s+/g` into `/s+/g` and silently strip every letter "s"
+ * from the text being compared. That bug made the skip dialog read
+ * "Are you ure?" instead of "Are you sure?" and broke the confirmation match.
+ */
+const NORM_JS = String.raw`const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();`;
+
+/** Render milliseconds as m:ss. Null-safe, for diagnostics only. */
+function msToDisplay(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return 'n/a';
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/** True when the end-of-exercise summary is on screen. */
+const SUMMARY_PRESENT = `(() => {
+  if (document.querySelector('form[name="answerform"]')) return false;
+  if (document.querySelectorAll('[data-testid^="exercise-progress-"]').length > 0) return false;
+  return !!document.querySelector('.bibliotron-exercise');
+})()`;
+
+/** Read the injected timing card out of its Shadow DOM. */
+const SUMMARY_CARD = `(() => {
+  ${NORM_JS}
+  const host = document.getElementById('khan-academy-timer-summary');
+  if (!host || !host.shadowRoot) return { present: false };
+  const root = host.shadowRoot;
+  const rows = Array.from(root.querySelectorAll('tbody tr'));
+  return {
+    present: true,
+    text: norm(root.textContent),
+    rowCount: rows.length,
+    rows: rows.map((r) => norm(r.textContent)),
+    durations: Array.from(root.querySelectorAll('td.dur')).map((c) => norm(c.textContent)),
+  };
+})()`;
+
+/** The current question's progress state word, e.g. "incomplete" / "correct". */
+const CURRENT_STATE = `(() => {
+  const cells = Array.from(document.querySelectorAll('[data-testid^="exercise-progress-"]'));
+  const cur = cells.find((el) => (el.getAttribute('data-testid') || '').endsWith('-current'));
+  if (!cur) return null;
+  const m = (cur.getAttribute('data-testid') || '').match(/exercise-progress-(\\d+)-(.+?)(?:-current)?$/);
+  return m ? { index: Number(m[1]), state: m[2] } : null;
+})()`;
+
+/** The label of the advance control, which tells "next" from "show summary". */
+const ADVANCE_LABEL = `(() => {
+  const b = document.querySelector('[data-testid="exercise-next-question"]');
+  return b ? (b.textContent || '').replace(/\\s+/g, ' ').trim() : null;
+})()`;
+
+/** Page-side view of the current question, for cross-checking the extension. */
+const PAGE_STATE = `(() => {
+  const qa = (s) => { try { return Array.from(document.querySelectorAll(s)); } catch { return []; } };
+  const cells = qa('[data-testid^="exercise-progress-"]');
+  const cur = cells.find((el) => (el.getAttribute('data-testid') || '').endsWith('-current'));
+  const host = document.getElementById('khan-academy-timer-host');
+  let diag = null;
+  try {
+    diag = host ? JSON.parse(host.getAttribute('data-khan-timer-diagnostics') || 'null') : null;
+  } catch { diag = 'unparseable'; }
+  return {
+    progressAll: cells.map((el) => el.getAttribute('data-testid')),
+    current: cur ? cur.getAttribute('data-testid') : null,
+    hasAnswerForm: !!document.querySelector('form[name="answerform"]'),
+    hasNext: !!document.querySelector('[data-testid="exercise-next-question"]'),
+    hasCheck: !!document.querySelector('[data-testid="exercise-check-answer"]'),
+    summary: !document.querySelector('form[name="answerform"]') && cells.length === 0 &&
+             !!document.querySelector('.bibliotron-exercise'),
+    extension: diag,
+  };
 })()`;
 
 /** Parse m:ss / h:mm:ss into milliseconds. */
@@ -202,6 +286,46 @@ const SOLVE_AND_SUBMIT = `(() => {
   btn.click();
   return { ok: true, answer };
 })()`;
+
+/**
+ * Solve the current question and confirm the page actually graded it correct.
+ *
+ * Khan Academy occasionally ignores the first synthetic input, and proceeding
+ * on a wrong answer desynchronises the whole run and makes later checks
+ * meaningless. Retrying keeps the verification deterministic.
+ */
+async function answerCorrectly(cdp, label, attempts = 3) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const solved = await cdp.evaluate(SOLVE_AND_SUBMIT);
+    if (!solved?.ok) {
+      console.log(`  ${label} attempt ${attempt}: could not solve -> ${JSON.stringify(solved)}`);
+      return { ok: false, solved };
+    }
+    await sleep(2600);
+    const state = await cdp.evaluate(CURRENT_STATE);
+    console.log(`  ${label} attempt ${attempt}: answer=${solved.answer} -> state=${state?.state}`);
+    if (state?.state === 'correct') return { ok: true, solved, state };
+  }
+  return { ok: false, reason: 'never graded correct' };
+}
+
+/**
+ * Wait for the end-of-exercise summary to settle.
+ *
+ * Khan Academy sometimes goes straight to the summary after the last answer
+ * without waiting for the advance control to be clicked, so a single check can
+ * race the transition.
+ */
+async function waitForSummary(cdp, timeoutMs = 25000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await cdp.evaluate(PAGE_STATE).catch(() => null);
+    if (last?.summary) return { reached: true, state: last };
+    await sleep(700);
+  }
+  return { reached: false, state: last };
+}
 
 async function main() {
   const profile = await mkdtemp(path.join(tmpdir(), 'kat-verify-'));
@@ -265,7 +389,11 @@ async function main() {
     }
     check('content script injects the panel host', Boolean(panel?.present));
     check('panel uses Shadow DOM isolation', Boolean(panel?.shadow));
-    check('panel is visible', Boolean(panel?.visible));
+    check(
+      'panel is visible',
+      Boolean(panel?.visible),
+      `host.style.display=${JSON.stringify(panel?.hostDisplay)} classes=${panel?.statusClasses}`,
+    );
 
     // 2. Countup started automatically, in countup mode.
     check('countup mode is active by default', panel?.mode === '正计时', `mode=${panel?.mode}`);
@@ -324,52 +452,284 @@ async function main() {
     );
     check('reset is reported in the panel footer', Boolean(afterReset?.footer), afterReset?.footer);
 
-    // 6. REGRESSION: submitting a correct answer must NOT reset the timer.
-    const beforeSubmit = await cdp.evaluate(READ_PANEL);
-    const beforeSubmitMs = parseDisplay(beforeSubmit?.time);
-    await sleep(2100);
-    const submitted = await cdp.evaluate(SOLVE_AND_SUBMIT);
-    console.log(`\n  submitted answer: ${JSON.stringify(submitted)}`);
+    // 6. Answering CORRECTLY stops the current question's timer.
+    //
+    // Requirement 2: once the Check result is "correct" the learner is done with
+    // the question, so the clock must stop. This replaces an earlier assertion
+    // that the timer should keep running.
+    await cdp.evaluate(clickPanel('reset'));
+    await sleep(600);
     await sleep(2500);
-    const afterSubmit = await cdp.evaluate(READ_PANEL);
-    const afterSubmitMs = parseDisplay(afterSubmit?.time);
+
+    const answered = await answerCorrectly(cdp, '[correct-answer]');
     check(
-      'REGRESSION: submitting an answer does NOT reset the timer',
-      beforeSubmitMs !== null && afterSubmitMs !== null && afterSubmitMs > beforeSubmitMs,
-      `${beforeSubmit?.time} -> ${afterSubmit?.time} (must keep growing)`,
+      'the page accepted the correct answer',
+      answered.ok === true,
+      JSON.stringify(answered.state ?? answered.reason),
+    );
+    await sleep(1200);
+    const afterCorrect = await cdp.evaluate(READ_PANEL);
+    const afterCorrectMs = parseDisplay(afterCorrect?.time);
+    check(
+      'answering correctly stops the timer',
+      (afterCorrect?.statusClass ?? '').includes('finished'),
+      `status=${afterCorrect?.statusClass} time=${afterCorrect?.time} footer=${afterCorrect?.footer}`,
+    );
+    check(
+      'the panel shows the completed state',
+      afterCorrect?.pauseLabel === '已完成',
+      `pauseLabel=${afterCorrect?.pauseLabel}`,
+    );
+    check(
+      'the pause control is disabled once the question is done',
+      afterCorrect?.pauseDisabled === true,
+      `disabled=${afterCorrect?.pauseDisabled}`,
+    );
+    // Decisive: the frozen value must not creep upwards afterwards.
+    await sleep(3500);
+    const stillFrozen = await cdp.evaluate(READ_PANEL);
+    check(
+      'the frozen value does not creep upwards afterwards',
+      parseDisplay(stillFrozen?.time) !== null &&
+        afterCorrectMs !== null &&
+        Math.abs(parseDisplay(stillFrozen?.time) - afterCorrectMs) <= 1000,
+      `${afterCorrect?.time} -> ${stillFrozen?.time} after 3.5s`,
     );
 
-    // 7. Advancing to the next question resets the timer and saves a record.
-    const beforeNext = await cdp.evaluate(READ_PANEL);
-    const nextClicked = await cdp.evaluate(`(() => {
+    // 7. Advancing starts a fresh timer for the next question.
+    const advanced = await cdp.evaluate(`(() => {
       const b = document.querySelector('[data-testid="exercise-next-question"]');
       if (!b) return false;
       b.click();
       return true;
     })()`);
-    check('the exercise exposes a next-question control after a correct answer', nextClicked);
-    if (nextClicked) {
+    check('a next-question control appears once the question is done', advanced);
+    await sleep(4200);
+    const afterAdvance = await cdp.evaluate(READ_PANEL);
+    const afterAdvanceMs = parseDisplay(afterAdvance?.time);
+    check(
+      'advancing to the next question restarts the timer',
+      afterAdvanceMs !== null && afterAdvanceMs <= 3000,
+      `${afterCorrect?.time} -> ${afterAdvance?.time}`,
+    );
+    check(
+      'the question identity changed on advance',
+      afterAdvance?.meta !== afterCorrect?.meta,
+      `${afterCorrect?.meta} -> ${afterAdvance?.meta}`,
+    );
+    check(
+      'a record was saved for the finished question',
+      /已记录\s*[1-9]/.test(afterAdvance?.footer ?? ''),
+      afterAdvance?.footer,
+    );
+
+    // 8. SKIP: confirming a skip stops the current question's timer.
+    //
+    // Requirement 1. Clicking Skip opens a confirmation dialog; only confirming
+    // it means the question was actually skipped.
+    const skipOpened = await cdp.evaluate(`(() => {
+      const b = document.querySelector('[data-testid="exercise-skip-button"]');
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`);
+    check('the skip control is available', skipOpened);
+    if (skipOpened) {
+      await sleep(1600);
+      const dialog = await cdp.evaluate(`(() => {
+        ${NORM_JS}
+        const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+          .filter((d) => !/cookie|privacy/i.test(d.textContent || ''));
+        const d = dialogs[dialogs.length - 1];
+        if (!d) return null;
+        return {
+          text: norm(d.textContent).slice(0, 120),
+          buttons: Array.from(d.querySelectorAll('button'))
+            .map((b) => norm(b.textContent) || b.getAttribute('aria-label')),
+        };
+      })()`);
+      console.log(`  skip dialog: ${JSON.stringify(dialog)}`);
+      check('skip asks for confirmation first', Boolean(dialog?.text));
+
+      const beforeSkip = parseDisplay((await cdp.evaluate(READ_PANEL))?.time);
+      const confirmed = await cdp.evaluate(`(() => {
+        ${NORM_JS}
+        const lower = (s) => norm(s).toLowerCase();
+        const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'))
+          .filter((d) => !/cookie|privacy/i.test(d.textContent || ''));
+        const d = dialogs[dialogs.length - 1];
+        if (!d) return { clicked: false };
+        const target = Array.from(d.querySelectorAll('button'))
+          .find((b) => /skip/i.test(lower(b.textContent) + ' ' + lower(b.getAttribute('aria-label'))));
+        if (!target) {
+          return {
+            clicked: false,
+            buttons: Array.from(d.querySelectorAll('button')).map((b) => norm(b.textContent)),
+          };
+        }
+        target.click();
+        return { clicked: true, label: norm(target.textContent) };
+      })()`);
+      console.log(`  skip confirm: ${JSON.stringify(confirmed)}`);
+      check('the skip confirmation can be triggered', Boolean(confirmed?.clicked));
+      await sleep(3200);
+
+      const afterSkip = await cdp.evaluate(READ_PANEL);
+      const afterSkipMs = parseDisplay(afterSkip?.time);
+      check(
+        'confirming a skip stops the timer',
+        beforeSkip !== null && afterSkipMs !== null && afterSkipMs - beforeSkip <= 2000,
+        `${msToDisplay(beforeSkip)} -> ${afterSkip?.time} (frozen on skip)`,
+      );
+      check(
+        'the panel reports the skip',
+        /跳过/.test(`${afterSkip?.footer ?? ''}${afterSkip?.meta ?? ''}`) ||
+          (afterSkip?.statusClass ?? '').includes('finished'),
+        `status=${afterSkip?.statusClass} footer=${afterSkip?.footer}`,
+      );
+
+      // A skip does not advance by itself: the question is marked incorrect and
+      // the learner still has to finish it to move on. Answering it afterwards
+      // must NOT create a second record for the same question.
+      const skippedThenAnswered = await cdp.evaluate(SOLVE_AND_SUBMIT);
+      console.log(`  solving the skipped question: ${JSON.stringify(skippedThenAnswered)}`);
+      await sleep(3200);
+      console.log(`  state after answering the skipped question: ${JSON.stringify(await cdp.evaluate(CURRENT_STATE))}`);
+      const afterSkipAnswer = await cdp.evaluate(READ_PANEL);
+      check(
+        'answering after a skip does not resume the stopped timer',
+        parseDisplay(afterSkipAnswer?.time) === afterSkipMs,
+        `${afterSkip?.time} -> ${afterSkipAnswer?.time}`,
+      );
+      const advanceAfterSkip = await cdp.evaluate(`(() => {
+        const b = document.querySelector('[data-testid="exercise-next-question"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`);
+      check('the skipped question can be advanced past', advanceAfterSkip);
       await sleep(4200);
-      const afterNext = await cdp.evaluate(READ_PANEL);
-      const afterNextMs = parseDisplay(afterNext?.time);
+      console.log(`  after skipping: ${JSON.stringify(await cdp.evaluate(PAGE_STATE))}`);
+    }
+
+    // 9. Finish the remaining questions and reach the summary screen.
+    //    Requirement 3: the summary must show every question's time for this run.
+    // 4 regular questions plus an optional bonus question, then the summary.
+    for (let round = 1; round <= 8; round += 1) {
+      const beforeRound = await cdp.evaluate(PAGE_STATE);
+      const panelBefore = await cdp.evaluate(READ_PANEL);
+      console.log(
+        `\n  [round ${round}] page: current=${beforeRound?.current} ` +
+          `form=${beforeRound?.hasAnswerForm} check=${beforeRound?.hasCheck} next=${beforeRound?.hasNext} ` +
+          `summary=${beforeRound?.summary}`,
+      );
+      console.log(`             panel: time=${panelBefore?.time} status=${panelBefore?.statusClasses} footer=${panelBefore?.footer}`);
+      console.log(`             ext: ${JSON.stringify(beforeRound?.extension && {
+        evals: beforeRound.extension.evaluateCount,
+        reason: beforeRound.extension.lastReason,
+        progress: beforeRound.extension.progress,
+        progressRaw: beforeRound.extension.progressRaw,
+        key: beforeRound.extension.questionKey,
+        engineKey: beforeRound.extension.engineQuestionKey,
+        pending: beforeRound.extension.pendingCandidate,
+        lastEvent: beforeRound.extension.lastEvent,
+      })}`);
+
+      const onSummary = await cdp.evaluate(SUMMARY_PRESENT);
+      if (onSummary) break;
+
+      // Answer, then confirm the page actually graded it correct.
+      const solved = await answerCorrectly(cdp, `[round ${round}]`);
+      if (!solved?.ok) {
+        // The last question replaces "Next question" with "Show summary".
+        const summaryClicked = await cdp.evaluate(`(() => {
+          const b = document.querySelector('[data-testid="exercise-next-question"]');
+          if (!b) return false;
+          b.click();
+          return true;
+        })()`);
+        if (summaryClicked) {
+          await sleep(4500);
+          break;
+        }
+        break;
+      }
+      const panelAfterSolve = await cdp.evaluate(READ_PANEL);
+      console.log(
+        `  [round ${round}] after answering: panel time=${panelAfterSolve?.time} ` +
+          `status=${panelAfterSolve?.statusClasses} footer=${panelAfterSolve?.footer}`,
+      );
+
+      const advanceLabel = await cdp.evaluate(ADVANCE_LABEL);
+      console.log(`  [round ${round}] advance control label = ${JSON.stringify(advanceLabel)}`);
+      const next = await cdp.evaluate(`(() => {
+        const b = document.querySelector('[data-testid="exercise-next-question"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`);
+      console.log(`  [round ${round}] clicked next=${next}`);
+      if (!next) await sleep(1200);
+      await sleep(3800);
+      const afterNext = await cdp.evaluate(PAGE_STATE);
+      const panelAfterNext = await cdp.evaluate(READ_PANEL);
+      console.log(`  [round ${round}] after next: current=${afterNext?.current} summary=${afterNext?.summary} panel time=${panelAfterNext?.time} status=${panelAfterNext?.statusClasses} footer=${panelAfterNext?.footer}`);
+    }
+
+    let summaryRowCount = 0;
+    const summaryWait = await waitForSummary(cdp);
+    const reachedSummary = summaryWait.reached;
+    if (!reachedSummary) {
+      console.log(
+        `  summary never settled; last page state: ${JSON.stringify(summaryWait.state)}`,
+      );
+    }
+    check('the end-of-exercise summary screen is reached', reachedSummary);
+    if (reachedSummary) {
+      await sleep(2000);
+      const summaryCard = await cdp.evaluate(SUMMARY_CARD);
+      console.log(`\n  summary card: ${JSON.stringify(summaryCard)}`);
+      check('the summary card is injected', Boolean(summaryCard?.present));
       check(
-        'advancing to a new question restarts the timer',
-        afterNextMs !== null && afterNextMs <= 3000,
-        `${beforeNext?.time} -> ${afterNext?.time}`,
+        'the summary lists every question of this run',
+        (summaryCard?.rowCount ?? 0) >= 3,
+        `rowCount=${summaryCard?.rowCount}`,
+      );
+      summaryRowCount = summaryCard?.rowCount ?? 0;
+      check(
+        'the summary tags the bonus question',
+        /加试/.test(summaryCard?.rows?.join(' ') ?? ''),
+        JSON.stringify(summaryCard?.rows),
       );
       check(
-        'the question identity changed on advance',
-        afterNext?.meta !== beforeNext?.meta,
-        `${beforeNext?.meta} -> ${afterNext?.meta}`,
+        'each summary row shows a duration',
+        (summaryCard?.durations?.length ?? 0) === (summaryCard?.rowCount ?? -1) &&
+          (summaryCard?.durations ?? []).every((d) => /^\d+:\d{2}/.test(d)),
+        JSON.stringify(summaryCard?.durations),
       );
       check(
-        'a record was saved for the finished question',
-        /已记录\s*[1-9]/.test(afterNext?.footer ?? ''),
-        afterNext?.footer,
+        'the summary shows a total',
+        /合计/.test(summaryCard?.text ?? ''),
+        (summaryCard?.text ?? '').slice(0, 120),
+      );
+      check(
+        'the summary marks the skipped question',
+        /已跳过/.test(summaryCard?.rows?.join(' ') ?? ''),
+        JSON.stringify(summaryCard?.rows),
+      );
+      check(
+        'the summary does not print any tag twice',
+        !/加试加试|已跳过已跳过|答对答对/.test(summaryCard?.rows?.join(' ') ?? ''),
+        JSON.stringify(summaryCard?.rows),
+      );
+      check(
+        'the float panel is hidden on the summary screen',
+        (await cdp.evaluate(READ_PANEL))?.visible === false,
+        'no question is being timed here',
       );
     }
 
-    // 8. The extension's own popup page: real storage, real settings, real records.
+    // 10. The extension's own popup page: real storage, real settings, real records.
     const extensionId = unpackedExtensionId(DIST);
     let popup = null;
     try {
@@ -387,6 +747,14 @@ async function main() {
           limitInput: !!document.getElementById('countdownLimitSeconds'),
           soundToggle: !!document.getElementById('soundEnabled'),
           clearButton: !!document.getElementById('clear-records'),
+          records: (all.records && all.records.records ? all.records.records : []).map((r) => ({
+            runId: r.runId,
+            questionIndex: r.questionIndex,
+            durationMs: r.durationMs,
+            status: r.status,
+            endReason: r.endReason,
+            outcome: r.firstSubmissionOutcome,
+          })),
           uiMode: (document.getElementById('defaultMode') || {}).value || null,
           uiLimit: (document.getElementById('countdownLimitSeconds') || {}).value || null,
           checkboxes: {
@@ -408,6 +776,24 @@ async function main() {
         'popup reports the saved timing records',
         (popupState?.recordCount ?? 0) >= 1,
         `recordCount=${popupState?.recordCount} rendered="${popupState?.renderedRecordCount}"`,
+      );
+      // Strongest cross-check available: the summary must show exactly the
+      // records that were persisted for this run, no more and no fewer.
+      const runIds = new Set((popupState?.records ?? []).map((r) => r.runId));
+      check(
+        'all saved records belong to a single run',
+        runIds.size === 1,
+        `distinct runIds=${runIds.size}`,
+      );
+      check(
+        'the summary shows exactly the records saved for this run',
+        summaryRowCount === (popupState?.recordCount ?? -1),
+        `summaryRows=${summaryRowCount} savedRecords=${popupState?.recordCount}`,
+      );
+      check(
+        'every record carries a question outcome',
+        (popupState?.records ?? []).every((r) => r.outcome !== 'unknown'),
+        JSON.stringify((popupState?.records ?? []).map((r) => r.outcome)),
       );
       check(
         'popup reflects the stored timer mode',
@@ -475,32 +861,83 @@ async function main() {
       check('popup page could be verified', false, error.message);
     }
 
-    // 9. The content script picks the settings change up, and the countdown
-    //    mode engages on the question that is currently being timed.
-    await sleep(1800);
-    const cd1 = await cdp.evaluate(READ_PANEL);
-    check('countdown mode applies live to the current question', cd1?.mode === '倒计时', `mode=${cd1?.mode}`);
-    const cdStart = parseDisplay(cd1?.time);
-    await sleep(8000);
-    const cd2 = await cdp.evaluate(READ_PANEL);
-    check(
-      'countdown reaching zero shows a visible timeout state',
-      (cd2?.statusClass ?? '').includes('expired'),
-      `status=${cd2?.statusClass} time=${cd2?.time} meta=${cd2?.meta}`,
-    );
-    check(
-      'timeout does not navigate away or submit anything',
-      cd2?.mode === '倒计时' && Boolean(cd2?.time),
-      `time=${cd2?.time}`,
-    );
-    check(
-      'the timeout state is announced in the panel',
-      /超时|倒计时结束/.test(`${cd2?.meta ?? ''}${cd2?.footer ?? ''}`),
-      `meta=${cd2?.meta} footer=${cd2?.footer}`,
-    );
-    void cdStart;
+    // 11. Countdown mode: a fresh exercise target, so there is a live question.
+    //     (The first target has already reached the summary, where nothing is
+    //     being timed any more.)
+    if (popup) {
+      let cdCdp = null;
+      try {
+        cdCdp = await openTarget(URL_ARG);
+        await cdCdp.send('Emulation.setDeviceMetricsOverride', {
+          width: 1440,
+          height: 900,
+          deviceScaleFactor: 2,
+          mobile: false,
+        });
+        for (let i = 0; i < 40; i += 1) {
+          const ready = await cdCdp
+            .evaluate(`!!document.querySelector('#khan-academy-timer-host')`)
+            .catch(() => false);
+          if (ready) break;
+          await sleep(1000);
+        }
+        await sleep(2500);
 
-    // 10. Clearing records from the popup really clears them (spec 8.4).
+        // Drive the mode change through the popup's own controls (the page
+        // world has no access to chrome.storage).
+        await popup.evaluate(`(async () => {
+          const sel = document.getElementById('defaultMode');
+          sel.value = 'countdown';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          const lim = document.getElementById('countdownLimitSeconds');
+          lim.value = '6';
+          lim.dispatchEvent(new Event('change', { bubbles: true }));
+          const sound = document.getElementById('soundEnabled');
+          sound.checked = false;
+          sound.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 800));
+          return true;
+        })()`);
+        await sleep(2000);
+
+        const cd1 = await cdCdp.evaluate(READ_PANEL);
+        check(
+          'countdown mode applies live to a running question',
+          cd1?.mode === '倒计时',
+          `mode=${cd1?.mode} meta=${cd1?.meta}`,
+        );
+        await sleep(9000);
+        const cd2 = await cdCdp.evaluate(READ_PANEL);
+        check(
+          'countdown reaching zero shows a visible timeout state',
+          (cd2?.statusClass ?? '').includes('expired'),
+          `status=${cd2?.statusClass} time=${cd2?.time} meta=${cd2?.meta}`,
+        );
+        check(
+          'the timeout state is announced in the panel',
+          /超时|倒计时结束/.test(`${cd2?.meta ?? ''}${cd2?.footer ?? ''}`),
+          `meta=${cd2?.meta} footer=${cd2?.footer}`,
+        );
+        check(
+          'timeout does not navigate away or submit anything',
+          (await cdCdp.evaluate(SUMMARY_PRESENT)) === false && Boolean(cd2?.time),
+          `time=${cd2?.time}`,
+        );
+      } catch (error) {
+        check('countdown mode could be verified', false, error.message);
+      } finally {
+        try {
+          cdCdp?.ws?.close?.();
+        } catch {
+          /* ignore */
+        }
+        if (cdCdp?.targetId) {
+          await fetch(`http://127.0.0.1:${PORT}/json/close/${cdCdp.targetId}`).catch(() => undefined);
+        }
+      }
+    }
+
+    // 12. Clearing records from the popup really clears them (spec 8.4).
     if (popup) {
       const cleared = await popup.evaluate(`(async () => {
         document.getElementById('clear-records').click();

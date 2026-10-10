@@ -10,6 +10,7 @@
  */
 
 import type {
+  ActiveRun,
   QuestionRecord,
   Settings,
   StoredRecords,
@@ -170,7 +171,9 @@ export function sanitizeRecords(raw: unknown): QuestionRecord[] {
             : null,
       endReason: (candidate['endReason'] as QuestionRecord['endReason']) ?? 'question-change',
       status:
-        candidate['status'] === 'expired' || candidate['status'] === 'partial'
+        candidate['status'] === 'expired' ||
+        candidate['status'] === 'partial' ||
+        candidate['status'] === 'skipped'
           ? candidate['status']
           : 'completed',
       detectionConfidence:
@@ -180,6 +183,13 @@ export function sanitizeRecords(raw: unknown): QuestionRecord[] {
           ? candidate['detectionConfidence']
           : 'none',
       wasPaused: toBoolean(candidate['wasPaused'], false),
+      // Records written before the run model existed simply have no run id;
+      // they are still readable, they just will not appear in a summary.
+      runId: typeof candidate['runId'] === 'string' ? candidate['runId'] : '',
+      questionIndex:
+        typeof candidate['questionIndex'] === 'number' ? candidate['questionIndex'] : null,
+      questionTotal:
+        typeof candidate['questionTotal'] === 'number' ? candidate['questionTotal'] : null,
     });
   }
   return out;
@@ -223,6 +233,86 @@ export async function clearRecords(area: StorageArea | null): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Exercise runs (one pass through an exercise)
+ * ------------------------------------------------------------------ */
+
+/** A run older than this is treated as abandoned and replaced. */
+export const RUN_TTL_MS = 6 * 60 * 60 * 1000;
+
+export function runKey(exerciseKey: string): string {
+  return `run:${exerciseKey}`;
+}
+
+export function sanitizeRun(raw: unknown): ActiveRun | null {
+  if (!isRecord(raw)) return null;
+  const runId = raw['runId'];
+  const startedAt = Number(raw['startedAt']);
+  if (typeof runId !== 'string' || !runId) return null;
+  if (!Number.isFinite(startedAt)) return null;
+  return {
+    version: 1,
+    runId,
+    exerciseKey: typeof raw['exerciseKey'] === 'string' ? raw['exerciseKey'] : '',
+    startedAt,
+    summarizedAt: typeof raw['summarizedAt'] === 'number' ? raw['summarizedAt'] : null,
+    lastQuestionIndex:
+      typeof raw['lastQuestionIndex'] === 'number' ? raw['lastQuestionIndex'] : null,
+  };
+}
+
+/**
+ * Fetch the run in progress for an exercise, or null when a new one should
+ * start. A run is finished once its summary has been shown, or when it is so
+ * old that it cannot belong to the attempt the learner is making now.
+ */
+export async function loadRun(
+  area: StorageArea | null,
+  exerciseKey: string,
+  now: number,
+  ttlMs = RUN_TTL_MS,
+): Promise<ActiveRun | null> {
+  if (!area) return null;
+  try {
+    const key = runKey(exerciseKey);
+    const got = await area.get(key);
+    const run = sanitizeRun(got[key]);
+    if (!run) return null;
+    if (run.summarizedAt !== null) return null;
+    if (now - run.startedAt > ttlMs) return null;
+    return run;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveRun(area: StorageArea | null, run: ActiveRun): Promise<boolean> {
+  if (!area) return false;
+  try {
+    await area.set({ [runKey(run.exerciseKey)]: run });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Forget the run so the next question starts a fresh one. */
+export async function clearRun(area: StorageArea | null, exerciseKey: string): Promise<boolean> {
+  if (!area) return false;
+  try {
+    await area.remove(runKey(exerciseKey));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Records belonging to one run, in the order they were captured. */
+export function recordsForRun(records: QuestionRecord[], runId: string): QuestionRecord[] {
+  if (!runId) return [];
+  return records.filter((record) => record.runId === runId);
 }
 
 /* ------------------------------------------------------------------ *

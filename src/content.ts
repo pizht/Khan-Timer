@@ -18,19 +18,25 @@ import {
   OVERLAY_HOST_ID,
   QuestionDetector,
   type DetectorDiagnostics,
+  type ProgressStateChange,
 } from './question-detector.js';
 import { OverlayView, type OverlayState } from './overlay.js';
+import { SummaryView } from './summary-view.js';
 import { TimerEngine, formatDuration } from './timer-engine.js';
 import { disposeAudio, playExpiryTone } from './sound.js';
 import {
   addRecord,
   chromeStorageArea,
+  clearRun,
   clearSession,
   loadRecords,
+  loadRun,
   loadSession,
   loadSettings,
   pruneSessions,
+  recordsForRun,
   sanitizeSettings,
+  saveRun,
   saveSession,
   saveSettings,
   type StorageArea,
@@ -38,12 +44,18 @@ import {
 import {
   CORRECT_INDICATORS,
   INCORRECT_INDICATORS,
+  SKIP_BUTTON,
   START_OVER_BUTTON,
   SUBMIT_BUTTON,
+  SUMMARY_HOST,
+  completionTriggerFor,
   exerciseKeyFromUrl,
+  isSummaryPage,
+  readProgress,
   readSubmissionOutcome,
 } from './site-profile.js';
 import type {
+  ActiveRun,
   DetectionConfidence,
   DetectionEvent,
   EndReason,
@@ -51,6 +63,7 @@ import type {
   QuestionRecord,
   QuestionSnapshot,
   Settings,
+  SummaryRow,
   TimerSnapshot,
 } from './types.js';
 import { secondsToMs, uniqueId } from './util.js';
@@ -63,6 +76,8 @@ const CHECKPOINT_INTERVAL_MS = 5000;
 const MIN_RECORD_MS = 1000;
 /** Delay before reading the feedback area to decide correct/incorrect. */
 const FEEDBACK_SETTLE_MS = 350;
+/** How often to look for the end-of-exercise summary screen. */
+const SUMMARY_CHECK_INTERVAL_MS = 700;
 
 class ContentController {
   private area: StorageArea | null = null;
@@ -108,6 +123,30 @@ class ContentController {
   private disposed = false;
   private tickCount = 0;
 
+  /** The run (one pass through the exercise) that records are tagged with. */
+  private run: ActiveRun | null = null;
+  /**
+   * A completed question whose record has not been written yet. Timing stopped
+   * at `endReason`, but the record is only stored when the question actually
+   * changes or the summary appears, so the row is available for the summary.
+   */
+  private pendingRecord: QuestionRecord | null = null;
+  /** Set while the learner is on the end-of-exercise summary screen. */
+  private inSummary = false;
+  private lastSummaryCheckAt = 0;
+  private summaryView: SummaryView | null = null;
+  /**
+   * Set when the Skip control is clicked. A skip is only treated as final once
+   * the question's progress state actually leaves "incomplete", which
+   * distinguishes a confirmed skip from a cancelled one.
+   */
+  private skipInitiated = false;
+  /** True once a question has actually been timed on this page. */
+  private seenQuestion = false;
+  /** Position of the question being timed, for the summary rows. */
+  private currentQuestionIndex: number | null = null;
+  private currentQuestionTotal: number | null = null;
+
   async init(): Promise<void> {
     this.area = chromeStorageArea();
     this.settings = await loadSettings(this.area);
@@ -134,6 +173,7 @@ class ContentController {
           this.diagnostics = info;
           this.publishDiagnostics();
         },
+        onProgressStateChange: (change) => this.onProgressStateChange(change),
       },
       {
         debounceMs: this.settings.detectionDebounceMs,
@@ -156,6 +196,11 @@ class ContentController {
    * ------------------------------------------------------------ */
 
   private onDetectionEvent(event: DetectionEvent, snapshot: QuestionSnapshot): void {
+    const progress = readProgress(document);
+    if (progress) {
+      this.currentQuestionIndex = progress.index;
+      this.currentQuestionTotal = progress.total;
+    }
     switch (event.type) {
       case 'question-changed': {
         if (event.from === null) {
@@ -194,6 +239,24 @@ class ContentController {
     this.currentExerciseKey = exerciseKey;
     this.currentConfidence = snapshot.confidence;
 
+    // One run per pass through the exercise. Reused across page reloads so the
+    // summary still covers the whole attempt; replaced once its summary has
+    // been shown, or when it is too old to belong to this attempt.
+    let run = await loadRun(this.area, exerciseKey, now);
+    if (token !== this.flowToken) return;
+    if (!run) {
+      run = {
+        version: 1,
+        runId: uniqueId('run'),
+        exerciseKey,
+        startedAt: now,
+        summarizedAt: null,
+        lastQuestionIndex: readProgress(document)?.index ?? null,
+      };
+      void saveRun(this.area, run);
+    }
+    this.run = run;
+
     let engine: TimerEngine | null = null;
     let restored = false;
 
@@ -221,6 +284,7 @@ class ContentController {
     }
 
     this.engine = engine;
+    this.seenQuestion = true;
     this.warning =
       snapshot.confidence === 'weak'
         ? '题目识别仅依赖弱信号（进度标记），可能无法自动检测切题。请使用"重置本题"。'
@@ -231,21 +295,79 @@ class ContentController {
     this.render();
   }
 
-  private async finalizeCurrentQuestion(now: number, reason: EndReason): Promise<void> {
+  /**
+   * Stop timing the current question the moment the learner is done with it —
+   * they answered correctly, or they confirmed a skip.
+   *
+   * The record is built now (so its duration is frozen at this instant) but is
+   * held in `pendingRecord` rather than written, because the end-of-exercise
+   * summary needs the last question's row and the question has not changed yet.
+   */
+  private completeCurrentQuestion(now: number, reason: EndReason): void {
     const engine = this.engine;
     if (!engine) return;
+
+    // Self-heal: a held record belonging to a DIFFERENT question means a
+    // question change went unnoticed. Persist it rather than letting it block
+    // this question's completion (which would silently lose a whole row).
+    const held = this.pendingRecord;
+    if (
+      held !== null &&
+      held.questionIndex !== null &&
+      this.currentQuestionIndex !== null &&
+      held.questionIndex !== this.currentQuestionIndex
+    ) {
+      this.pendingRecord = null;
+      void this.storeRecord(held);
+    }
+    if (this.pendingRecord !== null) return;
+
+    if (engine.getPhase() === 'finished') {
+      this.pendingRecord = this.buildRecord(engine, engine.snapshot(now), now, reason);
+      return;
+    }
     const final = engine.finish(now, reason);
-    this.engine = null;
+    this.pendingRecord = this.buildRecord(engine, final, now, reason);
+    this.lastEventText =
+      reason === 'skipped' ? '已跳过，本题计时已停止' : '答对，本题计时已停止';
+    void this.checkpoint(now, true);
+    this.render();
+  }
 
-    const exerciseKey = engine.exerciseKey;
-    await clearSession(this.area, exerciseKey);
+  private async finalizeCurrentQuestion(now: number, reason: EndReason): Promise<void> {
+    const engine = this.engine;
 
-    if (final.elapsedMs < MIN_RECORD_MS && engine.getFirstSubmission() === null) {
-      // Too short to be a real attempt: most likely a spurious DOM swap.
+    // A question that already completed keeps its frozen duration; the reason
+    // recorded is the one that actually stopped the clock.
+    const held = this.pendingRecord;
+    this.pendingRecord = null;
+    this.skipInitiated = false;
+
+    if (!engine) {
+      if (held) await this.storeRecord(held);
       return;
     }
 
-    const record = this.buildRecord(engine, final, now, reason);
+    const final = engine.getPhase() === 'finished' ? engine.snapshot(now) : engine.finish(now, reason);
+    this.engine = null;
+    await clearSession(this.area, engine.exerciseKey);
+
+    const record = held ?? this.buildRecord(engine, final, now, reason);
+
+    // A question abandoned almost instantly, with no answer ever submitted, is
+    // far more likely to be detection noise than a real attempt.
+    if (
+      record.durationMs < MIN_RECORD_MS &&
+      record.firstSubmissionAt === null &&
+      record.endReason !== 'skipped'
+    ) {
+      return;
+    }
+
+    await this.storeRecord(record);
+  }
+
+  private async storeRecord(record: QuestionRecord): Promise<void> {
     const saved = await addRecord(this.area, record);
     if (saved) this.recordsCount = saved.length;
   }
@@ -271,9 +393,12 @@ class ContentController {
       firstSubmissionAt: submission?.at ?? null,
       firstSubmissionOutcome: submission?.outcome ?? null,
       endReason: reason,
-      status: final.expired ? 'expired' : reason === 'page-unload' ? 'partial' : 'completed',
+      status: reason === 'skipped' ? 'skipped' : final.expired ? 'expired' : reason === 'page-unload' ? 'partial' : 'completed',
       detectionConfidence: this.currentConfidence,
       wasPaused: engine.hasSeenPause(),
+      runId: this.run?.runId ?? '',
+      questionIndex: this.currentQuestionIndex,
+      questionTotal: this.currentQuestionTotal,
     };
   }
 
@@ -305,12 +430,156 @@ class ContentController {
     }
     const now = Date.now();
     engine.reset(now, true);
+    // Resetting after answering correctly puts the question back under timing,
+    // so drop the held "completed" record for this question.
+    this.pendingRecord = null;
+    this.skipInitiated = false;
     this.warning = null;
     this.lastEventText = '已重置本题计时';
     // Re-evaluate so a reset never looks like a question change.
     this.detector?.reevaluate('manual-reset');
     void this.checkpoint(now, true);
     this.render();
+  }
+
+  /**
+   * The current question's progress state moved while its index did not.
+   *
+   * This is what tells us the learner finished with the question they are on:
+   *   - `correct`                      -> they answered it right: stop timing
+   *   - anything else after a Skip     -> the skip was confirmed: stop timing
+   *   - anything else without a Skip   -> a wrong answer; they may retry, so
+   *                                       timing deliberately continues
+   */
+  private onProgressStateChange(change: ProgressStateChange): void {
+    if (this.inSummary) return;
+
+    // Settle the first submission's correctness FIRST, so the record that is
+    // about to be built carries it. Reading the feedback area on a timer proved
+    // unreliable: it usually fired before the page had updated the state, so
+    // records were stored with outcome "unknown". The progress state change is
+    // the authoritative signal and arrives after the page has settled.
+    const engine = this.engine;
+    if (engine && engine.getFirstSubmission() !== null) {
+      engine.setFirstSubmissionOutcome(change.state === 'correct' ? 'correct' : 'incorrect');
+    }
+
+    if (this.pendingRecord !== null) return; // already stopped for this question
+
+    const trigger = completionTriggerFor(change.state, change.previous, this.skipInitiated);
+    if (trigger) this.completeCurrentQuestion(Date.now(), trigger);
+  }
+
+  /* ------------------------------------------------------------ *
+   * End-of-exercise summary
+   * ------------------------------------------------------------ */
+
+  /**
+   * Watch for the summary screen appearing (and for the learner starting a new
+   * attempt from it).
+   *
+   * The summary replaces the whole question area, so the detector would only
+   * report "region not found". This check runs alongside it and takes over once
+   * the exercise is finished.
+   */
+  private checkSummaryState(now: number): void {
+    if (now - this.lastSummaryCheckAt < SUMMARY_CHECK_INTERVAL_MS) return;
+    this.lastSummaryCheckAt = now;
+    const onSummary = isSummaryPage(document);
+    if (onSummary && !this.inSummary) {
+      // Guard against a false positive while the page is still loading: the
+      // exercise chrome exists before the question does, so "no answer form"
+      // briefly looks like the summary. Only a page that has actually been
+      // timing a question can be finished.
+      if (!this.seenQuestion) return;
+      void this.enterSummary(now);
+    } else if (!onSummary && this.inSummary) {
+      this.leaveSummary();
+    }
+  }
+
+  private async enterSummary(now: number): Promise<void> {
+    this.inSummary = true;
+
+    // The last question never "changed", so its held record is written here.
+    // This is also what makes it available as a summary row.
+    await this.finalizeCurrentQuestion(now, 'exercise-complete');
+
+    const exerciseKey = this.currentExerciseKey || exerciseKeyFromUrl(location.href);
+    const runId = this.run?.runId ?? '';
+    if (this.run) {
+      this.run = { ...this.run, summarizedAt: now };
+      void saveRun(this.area, this.run);
+    }
+    // Stop question tracking: there is no question on this screen.
+    this.detector?.stop();
+    this.overlay?.setVisible(false);
+    this.warning = null;
+    this.lastEventText = '本轮已完成，已显示每题用时';
+
+    const records = await loadRecords(this.area);
+    const runRecords = recordsForRun(records, runId);
+    // Rows follow capture order, which keeps them unambiguous even though the
+    // page's own index restarts for a bonus question.
+    let highestIndex = -1;
+    const rows: SummaryRow[] = runRecords.map((record, position) => {
+      const index = record.questionIndex;
+      const bonus = index !== null && index <= highestIndex;
+      if (index !== null) highestIndex = Math.max(highestIndex, index);
+      return {
+        questionNumber: position + 1,
+        bonus,
+        durationMs: record.durationMs,
+        pausedMs: record.pausedMs,
+        mode: record.mode,
+        limitMs: record.limitMs,
+        timedOut: record.timedOut,
+        skipped: record.status === 'skipped' || record.endReason === 'skipped',
+        firstSubmissionOutcome: record.firstSubmissionOutcome,
+        endReason: record.endReason,
+      };
+    });
+
+    const host = this.findSummaryHost();
+    if (!host) {
+      this.lastEventText = '本轮已完成，但未找到可插入用时的位置';
+      this.render();
+      return;
+    }
+    this.summaryView = this.summaryView ?? new SummaryView();
+    this.summaryView.mount(host.element, host.insert);
+    this.summaryView.render({ rows });
+    this.render();
+  }
+
+  private leaveSummary(): void {
+    this.inSummary = false;
+    this.seenQuestion = false;
+    this.summaryView?.destroy();
+    this.summaryView = null;
+    // A new attempt: forget the finished run so records start a fresh one.
+    const exerciseKey = this.currentExerciseKey;
+    if (exerciseKey) void clearRun(this.area, exerciseKey);
+    this.run = null;
+    this.pendingRecord = null;
+    this.skipInitiated = false;
+    this.detector?.start();
+    this.overlay?.setVisible(this.settings.overlayVisible);
+    this.lastEventText = '检测到新一轮答题';
+    this.render();
+  }
+
+  private findSummaryHost(): { element: Element; insert: 'after-host' | 'append' } | null {
+    for (const strategy of SUMMARY_HOST) {
+      let element: Element | null = null;
+      try {
+        element = strategy.select(document);
+      } catch {
+        continue;
+      }
+      if (element) return { element, insert: strategy.insert };
+    }
+    return null;
   }
 
   /**
@@ -380,6 +649,7 @@ class ContentController {
     // Refresh the detector's diagnostics roughly once a second so the panel's
     // support attribute reflects reality even when nothing is changing.
     if (this.tickCount % 4 === 0) this.detector?.refreshDiagnostics();
+    this.checkSummaryState(now);
     this.render();
   }
 
@@ -429,6 +699,9 @@ class ContentController {
         if (!(target instanceof Element)) return;
         if (target.closest(`#${OVERLAY_HOST_ID}`)) return;
         if (!this.isSubmitControl(target)) return;
+        // Submitting through Check is not a skip, even if Skip was opened and
+        // dismissed earlier.
+        this.skipInitiated = false;
         this.noteSubmission(Date.now());
       },
       true,
@@ -496,6 +769,13 @@ class ContentController {
         const target = event.target;
         if (!(target instanceof Element)) return;
         if (target.closest(`#${OVERLAY_HOST_ID}`)) return;
+        if (clickedControl(target, SKIP_BUTTON) !== null) {
+          // Only a *confirmed* skip stops the clock; see onProgressStateChange.
+          this.skipInitiated = true;
+          this.lastEventText = '已点击跳过，等待确认…';
+          this.render();
+          return;
+        }
         if (clickedControl(target, START_OVER_BUTTON) === null) return;
         // Let the SPA swap the question, then restart from scratch.
         window.setTimeout(() => {

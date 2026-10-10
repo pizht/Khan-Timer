@@ -127,6 +127,10 @@ const SHADOW_CSS = `
 .meta .k { font-weight: 600; color: #0b214a; }
 .status-running .time { color: #0b214a; }
 .status-paused .time { color: #8a6d1f; }
+.status-finished .time { color: #1a7f4b; }
+.status-finished .readout::after {
+  content: "已完成"; font-size: 11px; font-weight: 700; color: #1a7f4b;
+}
 .status-paused .readout::after {
   content: "已暂停"; font-size: 11px; font-weight: 700; color: #8a6d1f;
 }
@@ -172,6 +176,7 @@ const SHADOW_CSS = `
 .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #1865f2; }
 .pill.paused .dot { background: #d9a821; }
 .pill.expired .dot { background: #c0392b; animation: pulse 1s ease-in-out infinite; }
+.pill.finished .dot { background: #1a7f4b; }
 `;
 
 interface Refs {
@@ -366,16 +371,25 @@ export class OverlayView {
     refs.pillTime.textContent = text;
     refs.modeTag.textContent = isCountdown ? '倒计时' : '正计时';
 
-    const status = state.expired ? 'expired' : state.phase === 'paused' ? 'paused' : 'running';
-    refs.panel.classList.remove('status-running', 'status-paused', 'status-expired');
+    // A finished question keeps its frozen value and shows that timing stopped
+    // because the learner was done with it (answered correctly, or skipped).
+    const status = state.expired
+      ? 'expired'
+      : state.phase === 'finished'
+        ? 'finished'
+        : state.phase === 'paused'
+          ? 'paused'
+          : 'running';
+    refs.panel.classList.remove('status-running', 'status-paused', 'status-expired', 'status-finished');
     refs.panel.classList.add(`status-${status}`);
-    refs.pill.classList.remove('paused', 'expired');
-    if (status === 'paused') refs.pill.classList.add('paused');
+    refs.pill.classList.remove('paused', 'expired', 'finished');
+    if (status === 'paused' || status === 'finished') refs.pill.classList.add(status);
     if (status === 'expired') refs.pill.classList.add('expired');
 
-    refs.pauseBtn.textContent = state.phase === 'paused' ? '继续' : '暂停';
+    refs.pauseBtn.textContent =
+      state.phase === 'finished' ? '已完成' : state.phase === 'paused' ? '继续' : '暂停';
     refs.pauseBtn.disabled = state.phase === 'finished';
-    refs.pauseBtn.classList.toggle('primary', state.phase !== 'paused');
+    refs.pauseBtn.classList.toggle('primary', state.phase === 'running');
 
     // Meta line: limit, overrun, progress and question identity.
     const bits: string[] = [];

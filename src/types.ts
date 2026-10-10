@@ -23,8 +23,17 @@ export type TimerMode = 'countup' | 'countdown';
  */
 export type TimerPhase = 'idle' | 'running' | 'paused' | 'finished';
 
-/** Why a question's timing session ended. */
+/**
+ * Why a question's timing session ended.
+ *
+ * `answered-correct` and `skipped` are "the learner finished with this
+ * question" reasons: timing stops immediately at that moment, while the
+ * question is still on screen. The record is written later, when the question
+ * actually changes or the end-of-exercise summary appears.
+ */
 export type EndReason =
+  | 'answered-correct'
+  | 'skipped'
   | 'question-change'
   | 'exercise-complete'
   | 'navigation'
@@ -36,7 +45,7 @@ export type EndReason =
 export type FirstSubmissionOutcome = 'correct' | 'incorrect' | 'unknown';
 
 /** Storage status of a record, per spec 2.5 ("记录状态"). */
-export type RecordStatus = 'completed' | 'expired' | 'partial';
+export type RecordStatus = 'completed' | 'expired' | 'partial' | 'skipped';
 
 /** How confidently the question identity was established. */
 export type DetectionConfidence = 'stable-id' | 'fingerprint' | 'weak' | 'none';
@@ -155,6 +164,60 @@ export interface QuestionRecord {
   detectionConfidence: DetectionConfidence;
   /** Manually paused by the user at some point during the question. */
   wasPaused: boolean;
+  /**
+   * One pass through an exercise. Groups the records shown on the
+   * end-of-exercise summary, so "this round" is distinguishable from an
+   * earlier attempt at the same exercise.
+   */
+  runId: string;
+  /** Zero-based position of the question within the exercise, when known. */
+  questionIndex: number | null;
+  /** Number of questions in the exercise, when the page exposes it. */
+  questionTotal: number | null;
+}
+
+/**
+ * The exercise attempt currently in progress.
+ *
+ * Persisted under `run:<exerciseKey>` rather than inside the per-question
+ * session, because the session is replaced on every question change.
+ */
+export interface ActiveRun {
+  version: 1;
+  runId: string;
+  exerciseKey: string;
+  startedAt: number;
+  /** Set once the end-of-exercise summary has been shown for this run. */
+  summarizedAt: number | null;
+  /** Highest question index seen, for diagnostics. */
+  lastQuestionIndex: number | null;
+}
+
+/** One row of the end-of-exercise summary panel. */
+export interface SummaryRow {
+  /**
+   * 1-based position of this question within the run, in capture order.
+   *
+   * Numbered by order rather than by the page's own index, because Khan
+   * Academy's index restarts at 0 for a bonus question (observed: the control
+   * after the last regular question reads "Bonus question", and the progress
+   * marker goes back to `exercise-progress-0-...`). Ordering by sequence keeps
+   * the rows unambiguous either way.
+   */
+  questionNumber: number | null;
+  /**
+   * True when this row is the optional bonus question, detected by the page's
+   * own index moving backwards within the run.
+   */
+  bonus: boolean;
+  durationMs: number;
+  pausedMs: number;
+  mode: TimerMode;
+  limitMs: number | null;
+  timedOut: boolean;
+  skipped: boolean;
+  firstSubmissionOutcome: FirstSubmissionOutcome | null;
+  endReason: EndReason;
 }
 
 /** Overlay anchor mode. */

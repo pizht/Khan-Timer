@@ -232,7 +232,7 @@ data-question-id  data-item-id  data-problem-id  data-perseus-id  data-question
 
 | 等级 | 含义 | 本项目的具体对象 |
 |---|---|---|
-| `Edge-verified` | 已在真实 Edge 页面驱动验证行为 | 练习页 `addition_4` 的：面板注入、正计时自动开始、暂停/继续/重置、**答题不重置计时**、切题重置计时并保存记录 |
+| `Edge-verified` | 已在真实 Edge 页面驱动验证行为 | 练习页 `addition_4` 的：面板注入、正计时自动开始、暂停/继续/重置、**答对/跳过即停表**、**提示展开不重置计时**、切题结算并保存记录、**结束页显示每题用时** |
 | `Automated-tested` | 已用自动化驱动真实页面并对比前后状态 | 练习页 `addition_4` 的：进度索引 0→1→2→3、题库切换、反馈浮层位置、提示展开后的区域文本变化 |
 | `Observed` | 已观察到页面结构，未驱动验证行为 | 练习页 `rounding-to-the-nearest-ten-or-hundred`、quiz `imp-addition-and-subtraction-quiz-1` 的静态 DOM |
 | `Unverified` | 尚未实际验证 | 单元测试页、选择题/表达式/交互图等题型、登录后页面、本地化站点、其他课程 |

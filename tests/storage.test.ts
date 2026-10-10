@@ -74,6 +74,9 @@ function makeRecord(overrides: Partial<QuestionRecord> = {}): QuestionRecord {
     status: 'completed',
     detectionConfidence: 'stable-id',
     wasPaused: false,
+    runId: 'run_test',
+    questionIndex: 0,
+    questionTotal: 4,
     ...overrides,
   };
 }

@@ -293,6 +293,101 @@ export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
   return exerciseId ? `${base}#${exerciseId}` : base;
 }
 
+/* ------------------------------------------------------------------ *
+ * End-of-exercise summary
+ * ------------------------------------------------------------------ */
+
+/**
+ * The end-of-exercise summary screen ("Exercise complete! 4/4 correct").
+ *
+ * [VER] Detection is structural and was checked against every captured stage of
+ * a full 4-question run: the summary is the ONLY state in which the question
+ * form is gone while the exercise chrome is still present.
+ *
+ *     stage              answerform  progress  -> summary?
+ *     q1..q4 answered    present     4 marks   -> false
+ *     show summary       ABSENT      0 marks   -> true
+ *
+ * This is deliberately NOT keyed on the summary card's own testid, because that
+ * testid (`eot-phantom-user-registration`) names the *logged-out* registration
+ * prompt and is therefore not expected to exist for a signed-in learner. The
+ * structural check holds either way.
+ */
+export function isSummaryPage(doc: ParentNode): boolean {
+  if (doc.querySelector('form[name="answerform"]')) return false;
+  if (doc.querySelectorAll('[data-testid^="exercise-progress-"]').length > 0) return false;
+  return doc.querySelector('.bibliotron-exercise') !== null;
+}
+
+/**
+ * Why the current question stopped being timed, or null if it should keep
+ * running.
+ *
+ * Requirement 1 and 2 live here, in one testable place:
+ *   - the page graded the answer CORRECT      -> the learner is done: stop
+ *   - the page left "incomplete" after a Skip -> the skip was confirmed: stop
+ *   - the page left "incomplete" any other way (a wrong answer) -> keep timing,
+ *     because the learner is allowed to try again
+ *
+ * @param state          the progress state word now, e.g. "correct"
+ * @param previous       the state word before, e.g. "incomplete"
+ * @param skipInitiated  the Skip control was clicked and not cancelled
+ */
+export function completionTriggerFor(
+  state: string,
+  previous: string | null,
+  skipInitiated: boolean,
+): 'answered-correct' | 'skipped' | null {
+  // Nothing moved: this is not a completion, whatever the flags say. The
+  // detector only reports genuine transitions, but the guard keeps this rule
+  // correct on its own terms.
+  if (state === previous) return null;
+  if (state === 'correct') return 'answered-correct';
+  if (skipInitiated && previous === 'incomplete') return 'skipped';
+  return null;
+}
+
+/**
+ * Where to put the per-question timing card on the summary screen.
+ *
+ * `insert` says how to place the card relative to the host:
+ *   'after-host' — as the host's next sibling. Used for the summary card, whose
+ *                  own layout is a two-column flex row ("Exercise complete!"
+ *                  beside "Want to save your progress?"); inserting *inside* it
+ *                  made the timing table a cramped third column. As a sibling it
+ *                  spans the full width of the exercise content column.
+ *   'append'     — at the end of the host. Used for the structural fallbacks so
+ *                  a different (e.g. signed-in) summary layout still gets the
+ *                  card rather than nothing.
+ */
+export interface SummaryHostStrategy extends SelectorStrategy {
+  insert: 'after-host' | 'append';
+}
+
+export const SUMMARY_HOST: SummaryHostStrategy[] = [
+  {
+    // [OBS] The summary card itself, containing "Exercise complete!" and the
+    // score. Observed in the logged-out variant.
+    name: 'eot-summary-card',
+    select: first('[data-testid="eot-phantom-user-registration"]'),
+    insert: 'after-host',
+  },
+  {
+    // [OBS] The stable semantic wrapper around the whole exercise chrome.
+    // Structural fallback so the card still appears if the summary card's
+    // testid is absent (e.g. a signed-in learner).
+    name: 'bibliotron-exercise',
+    select: first('.bibliotron-exercise'),
+    insert: 'append',
+  },
+  {
+    // [OBS] Outer exercise panel. Last resort.
+    name: 'content-panel-wrapper',
+    select: first('[data-testid="content-panel-wrapper"]'),
+    insert: 'append',
+  },
+];
+
 /**
  * Decide the outcome of the learner's first submission.
  *
