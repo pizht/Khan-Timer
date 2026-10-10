@@ -375,40 +375,82 @@ export function completionTriggerFor(
 }
 
 /**
+ * Should the summary view be torn down?
+ *
+ * Leaving requires a POSITIVE signal, never merely the absence of the summary
+ * marker. The transition INTO the summary is not atomic (the answer form is
+ * removed before the progress markers are), and Khan Academy re-renders parts of
+ * the summary while it is up. Treating any non-summary frame as "the learner
+ * left" destroyed the injected card and cleared the run — and because that also
+ * reset the "a question has been timed" latch, the card was then never
+ * re-injected. Observed live as the summary card intermittently going missing.
+ *
+ * So: leave only when a question is genuinely on screen again (the learner
+ * started another attempt) or the page moved somewhere else entirely.
+ */
+export function shouldLeaveSummary(input: {
+  onSummary: boolean;
+  questionFormPresent: boolean;
+  urlChanged: boolean;
+}): boolean {
+  if (input.onSummary) return false;
+  return input.questionFormPresent || input.urlChanged;
+}
+
+/**
  * Where to put the per-question timing card on the summary screen.
  *
  * `insert` says how to place the card relative to the host:
- *   'after-host' — as the host's next sibling. Used for the summary card, whose
- *                  own layout is a two-column flex row ("Exercise complete!"
- *                  beside "Want to save your progress?"); inserting *inside* it
- *                  made the timing table a cramped third column. As a sibling it
- *                  spans the full width of the exercise content column.
- *   'append'     — at the end of the host. Used for the structural fallbacks so
- *                  a different (e.g. signed-in) summary layout still gets the
- *                  card rather than nothing.
+ *   'before-host' — immediately before the host, as its sibling. Used with the
+ *                   exercise footer, which is the last thing in the content
+ *                   column: the card therefore lands in normal flow BELOW every
+ *                   piece of the page's own summary content and pushes the
+ *                   footer down instead of covering it.
+ *   'append'      — at the end of the host. The structural fallbacks.
  */
 export interface SummaryHostStrategy extends SelectorStrategy {
-  insert: 'after-host' | 'append';
+  insert: 'before-host' | 'append';
 }
 
 export const SUMMARY_HOST: SummaryHostStrategy[] = [
   {
-    // [OBS] The summary card itself, containing "Exercise complete!" and the
-    // score. Observed in the logged-out variant.
-    name: 'eot-summary-card',
-    select: first('[data-testid="eot-phantom-user-registration"]'),
-    insert: 'after-host',
+    // [OBS][MEASURED] Inserted BEFORE the exercise chrome's content area.
+    //
+    // This placement was chosen by measurement, not by reading class names.
+    // The summary screen is a fixed-height app layout: the exercise chrome is
+    // built from zero-height flex items whose content is absolutely positioned,
+    // so almost every in-flow position paints over the results. Each candidate
+    // was injected with a card-sized probe and the overlap with the exercise
+    // panel's OWN text was counted (see references/observations.md §10.7):
+    //
+    //   before exercise-chrome-content      0 overlaps   (visible, y 503..713)
+    //   append to exercise-chrome-content   0 overlaps   (below the fold)
+    //   append to .bibliotron-exercise     10 overlaps
+    //   append to content-panel-wrapper     9 overlaps
+    //   before content-library-footer      12 overlaps
+    //   after  content-panel-wrapper        9 overlaps
+    //
+    // The primary therefore shows none of the page's result information being
+    // covered, AND lands inside the viewport so no scrolling is needed.
+    // (The chrome's own content is pushed down inside its scrollable area.)
+    name: 'before-exercise-chrome-content',
+    select: first('[class*="exercise-chrome-content"]'),
+    insert: 'before-host',
   },
   {
-    // [OBS] The stable semantic wrapper around the whole exercise chrome.
-    // Structural fallback so the card still appears if the summary card's
-    // testid is absent (e.g. a signed-in learner).
+    // Fallback for a layout where the content area exists but is not a suitable
+    // anchor: the end of that same scrollable area. Measured 0 overlaps too,
+    // but sits below the fold.
+    name: 'append-exercise-chrome-content',
+    select: first('[class*="exercise-chrome-content"]'),
+    insert: 'append',
+  },
+  {
     name: 'bibliotron-exercise',
     select: first('.bibliotron-exercise'),
     insert: 'append',
   },
   {
-    // [OBS] Outer exercise panel. Last resort.
     name: 'content-panel-wrapper',
     select: first('[data-testid="content-panel-wrapper"]'),
     insert: 'append',

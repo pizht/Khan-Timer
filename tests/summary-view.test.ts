@@ -193,7 +193,7 @@ describe('recordsForRun', () => {
 });
 
 describe('SummaryView', () => {
-  const mount = (insert: 'after-host' | 'append' = 'append'): SummaryView => {
+  const mount = (insert: 'before-host' | 'append' = 'append'): SummaryView => {
     document.body.innerHTML = `
       <div id="host">
         <div id="score"><h1>Exercise complete!</h1><span>4/4 correct</span></div>
@@ -220,18 +220,16 @@ describe('SummaryView', () => {
     expect(host?.closest('form[name="answerform"]')).toBeNull();
   });
 
-  it('places the card as a full-width sibling after the summary card', () => {
-    // Inserting INSIDE the summary card made the table a cramped third column
-    // of its two-column flex row, so the card goes after it instead.
-    mount('after-host');
-    const summaryCard = document.getElementById('host') as HTMLElement;
-    // The card lands directly after the summary card, as a sibling.
+  it('places the card in normal flow immediately BEFORE the host', () => {
+    // The real host is the exercise footer. The summary card above it measures
+    // height:0 with visible overflow, so a card placed after it painted over
+    // the page's results and its "Try again" button. Before the footer is
+    // below all of that and simply pushes the footer down.
+    mount('before-host');
     expect(Array.from(document.body.children).map((c) => c.id)).toEqual([
-      'host',
       SUMMARY_HOST_ID,
+      'host',
     ]);
-    // The summary card's own layout is left completely untouched.
-    expect(Array.from(summaryCard.children).map((c) => c.id)).toEqual(['score', 'signup']);
   });
 
   it('appends when the fallback host has no meaningful first child', () => {
@@ -310,15 +308,39 @@ describe('SummaryView', () => {
     expect(numbers.filter((n) => n.startsWith('第 1 题'))).toHaveLength(1);
   });
 
-  it('shows the countdown limit and paused time when present', () => {
+  it('has exactly two columns: the question and its time', () => {
+    // The mode column was removed on request; the table is question + duration.
     const view = mount();
     view.render({
-      rows: [makeRow({ questionNumber: 1, mode: 'countdown', limitMs: 60_000, pausedMs: 5_000 })]
+      rows: [
+        makeRow({ questionNumber: 1, mode: 'countdown', limitMs: 60_000 }),
+        makeRow({ questionNumber: 2, mode: 'countup' }),
+      ],
     });
-    const text = shadowText();
-    expect(text).toContain('倒计时');
-    expect(text).toContain('60s');
-    expect(text).toContain('暂停 0:05');
+    const root = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot;
+    const headers = Array.from(root?.querySelectorAll('thead th') ?? []).map((c) =>
+      (c.textContent ?? '').trim(),
+    );
+    expect(headers).toEqual(['题目', '用时']);
+    for (const tr of Array.from(root?.querySelectorAll('tbody tr') ?? [])) {
+      expect(tr.querySelectorAll('td').length).toBe(2);
+    }
+    // No mode wording anywhere in the card.
+    expect(shadowText()).not.toContain('正计时');
+    expect(shadowText()).not.toContain('倒计时');
+    expect(shadowText()).not.toContain('60s');
+  });
+
+  it('keeps paused time as a note under the duration, not a column', () => {
+    const view = mount();
+    view.render({
+      rows: [makeRow({ questionNumber: 1, mode: 'countdown', limitMs: 60_000, pausedMs: 5_000 })],
+    });
+    const root = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot;
+    const durCell = (root?.querySelector('td.dur')?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(durCell).toContain('0:20');
+    expect(durCell).toContain('暂停 0:05');
+    expect(root?.querySelectorAll('td.dur').length).toBe(1);
   });
 
   it('reports an empty state instead of pretending there is data', () => {

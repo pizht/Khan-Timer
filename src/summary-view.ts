@@ -26,10 +26,13 @@ const SHADOW_CSS = `
 :host {
   all: initial;
   display: block;
-  /* The host may land in a flex or grid container; claim a full row so the
-     table is never squeezed into a narrow column. */
+  /* The host can land in a flex container. width:100% keeps it full width, and
+     flex:0 0 auto deliberately does NOT grow: with flex-grow:1 in a column flex
+     container the card stretched to the container's full height (measured:
+     625px for a five-row table), which pushed page content around. Natural
+     height is what we want. */
   width: 100%;
-  flex: 1 0 100%;
+  flex: 0 0 auto;
   grid-column: 1 / -1;
 }
 * { box-sizing: border-box; }
@@ -111,7 +114,7 @@ export class SummaryView {
     return this.host !== null && this.host.isConnected;
   }
 
-  mount(container: Element, insert: 'after-host' | 'append'): void {
+  mount(container: Element, insert: 'before-host' | 'append'): void {
     this.destroy();
     const host = document.createElement('div');
     host.id = SUMMARY_HOST_ID;
@@ -123,8 +126,8 @@ export class SummaryView {
     card.className = 'card';
     root.append(style, card);
 
-    if (insert === 'after-host') {
-      container.after(host);
+    if (insert === 'before-host') {
+      container.before(host);
     } else {
       container.append(host);
     }
@@ -161,15 +164,15 @@ export class SummaryView {
       .map((row) => {
         const tag = tagFor(row);
         const number = row.questionNumber === null ? '—' : String(row.questionNumber);
-        const mode = row.mode === 'countdown' ? '倒计时' : '正计时';
-        const limit = row.limitMs === null ? '' : ` / ${Math.round(row.limitMs / 1000)}s`;
-        const paused = row.pausedMs >= 1000 ? `<div class="muted">暂停 ${escapeHtml(formatDuration(row.pausedMs))}</div>` : '';
+        const paused =
+          row.pausedMs >= 1000
+            ? `<div class="muted">暂停 ${escapeHtml(formatDuration(row.pausedMs))}</div>`
+            : '';
         const bonusTag = row.bonus ? '<span class="tag bonus">加试</span>' : '';
         return `
           <tr>
             <td class="num">第 ${number} 题${bonusTag}${tag ? `<span class="${tag.className}">${tag.text}</span>` : ''}</td>
-            <td>${mode}${limit}${paused}</td>
-            <td class="dur">${escapeHtml(formatDuration(row.durationMs))}</td>
+            <td class="dur">${escapeHtml(formatDuration(row.durationMs))}${paused}</td>
           </tr>
         `;
       })
@@ -179,7 +182,7 @@ export class SummaryView {
       ${head}
       <table>
         <thead>
-          <tr><th>题目</th><th>模式</th><th class="dur">用时</th></tr>
+          <tr><th>题目</th><th class="dur">用时</th></tr>
         </thead>
         <tbody>${bodyRows}</tbody>
       </table>

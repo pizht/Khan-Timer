@@ -32,6 +32,7 @@ import {
   isQuestionFinished,
   isSummaryPage,
   progressLabel,
+  shouldLeaveSummary,
   readProgress,
   readSubmissionOutcome,
 } from '../src/site-profile.js';
@@ -1004,5 +1005,35 @@ describe('completionTriggerFor + isQuestionFinished cover both answer paths', ()
       <button data-testid="exercise-next-question">Next question</button>`;
     expect(isQuestionFinished(document)).toBe(true);
     document.body.innerHTML = '';
+  });
+});
+
+describe('site-profile: shouldLeaveSummary', () => {
+  it('stays put on any frame that is not the summary, as long as no question is showing', () => {
+    // REGRESSION: the transition into the summary is not atomic, and the page
+    // re-renders while the summary is up. Tearing down on a bare "not summary"
+    // frame destroyed the injected card and cleared the run, and the card was
+    // then never re-injected.
+    expect(
+      shouldLeaveSummary({ onSummary: false, questionFormPresent: false, urlChanged: false }),
+    ).toBe(false);
+  });
+
+  it('never leaves while the summary is actually showing', () => {
+    expect(
+      shouldLeaveSummary({ onSummary: true, questionFormPresent: true, urlChanged: true }),
+    ).toBe(false);
+  });
+
+  it('leaves when a question is on screen again (another attempt)', () => {
+    expect(
+      shouldLeaveSummary({ onSummary: false, questionFormPresent: true, urlChanged: false }),
+    ).toBe(true);
+  });
+
+  it('leaves when the page navigated somewhere else', () => {
+    expect(
+      shouldLeaveSummary({ onSummary: false, questionFormPresent: false, urlChanged: true }),
+    ).toBe(true);
   });
 });

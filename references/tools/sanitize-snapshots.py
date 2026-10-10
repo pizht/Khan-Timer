@@ -139,7 +139,31 @@ def main() -> int:
         )
         written.append(target)
 
-    # 3. Feedback dialogs, which render outside the question region.
+    # 3. The end-of-exercise summary card, when the capture is of that screen.
+    summary = first(doc, '//*[@data-testid="eot-phantom-user-registration"]')
+    if summary is not None:
+        from lxml import etree
+
+        # The card only. Its parent also contains the whole course mastery grid
+        # (90 KB of unrelated lesson links), so it is deliberately left out; the
+        # parent's role is described in the comment instead.
+        clone = lxml_html.fromstring(lxml_html.tostring(summary))
+        clean(clone)
+        target = out / f"{label}-summary-screen.html"
+        target.write_text(
+            render(
+                clone,
+                "Sanitised excerpt: the END-OF-EXERCISE SUMMARY card. NOTE: this "
+                "element measures height:0 with visible overflow, and its parent is a "
+                "flex container, so a sibling placed AFTER it paints over the results "
+                "here. The extension's timing card is therefore inserted before the "
+                "exercise chrome content instead. See observations.md 10.7.",
+            ),
+            encoding="utf-8",
+        )
+        written.append(target)
+
+    # 4. Feedback dialogs, which render outside the question region.
     dialogs = [
         d
         for d in doc.xpath('//*[@role="dialog"]')

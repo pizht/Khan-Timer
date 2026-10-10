@@ -15,7 +15,7 @@
 
 ```bash
 pnpm install
-pnpm run verify          # 类型检查 + 单元测试(103) + 构建 + dist 产物检查(56)
+pnpm run verify          # 类型检查 + 单元测试(165) + 构建 + dist 产物检查(56)
 pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 ```
 
@@ -147,7 +147,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
 | 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
 | 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（3 文件 103 用例）；运行说明见 `README.md` → 测试与验证 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（4 文件 165 用例）；运行说明见 `README.md` → 测试与验证 |
 | 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
 | 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（14 条，含未满足的验收项） |
 
@@ -186,7 +186,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 160 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 165 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

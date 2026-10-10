@@ -182,34 +182,36 @@ async function main() {
     })()`).catch(() => undefined);
     await sleep(3000);
 
-    for (let round = 1; round <= 10; round += 1) {
-      const before = await cdp.evaluate(STATE);
-      if (before?.summary) break;
-      console.log(`round ${round}: index=${before?.index} state=${before?.state} label=${before?.advanceLabel}`);
-
+    let stalls = 0;
+    for (let round = 1; round <= 14; round += 1) {
+      const st = await cdp.evaluate(STATE);
+      if (st?.summary) break;
       let graded = false;
-      for (let attempt = 1; attempt <= 3 && !graded; attempt += 1) {
+      for (let attempt = 1; attempt <= 4 && !graded; attempt += 1) {
         const solved = await cdp.evaluate(SOLVE);
-        if (!solved?.ok) break;
+        if (!solved?.ok) {
+          // Transient: the page can be mid-transition with no answer form.
+          await sleep(2000);
+          continue;
+        }
         await sleep(2600);
-        const st = await cdp.evaluate(STATE);
-        graded = st?.state === 'correct';
-        console.log(`   attempt ${attempt}: ${solved.answer} -> ${st?.state}`);
+        const s2 = await cdp.evaluate(STATE);
+        graded = s2?.state === 'correct';
       }
-
       const moved = await cdp.evaluate(`(() => {
         const b = document.querySelector('[data-testid="exercise-next-question"]');
         if (!b) return false;
-        b.click();
-        return true;
+        b.click(); return true;
       })()`);
       if (!moved) {
-        console.log('   no advance control; stopping');
-        break;
+        stalls += 1;
+        if (stalls >= 3) break;
+        await sleep(2500);
+        continue;
       }
+      stalls = 0;
       await sleep(4200);
     }
-
     await sleep(2500);
     // Khan Academy raises an onboarding modal once the exercise is finished; it
     // covers the summary content, so clear it before the screenshot.

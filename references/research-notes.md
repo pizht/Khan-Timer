@@ -256,6 +256,8 @@ references/
 │   ├── exercise-after-correct-answer-question-region.html
 │   ├── exercise-after-correct-answer-exercise-footer.html
 │   ├── exercise-after-correct-answer-feedback-dialog.html
+│   ├── summary-screen-summary-screen.html   # 结束页卡片（height:0 的那个）
+│   ├── summary-screen-exercise-footer.html
 │   └── exercise-page-testids.md
 └── tools/
     ├── capture-dom.sh                # 真实 Edge 抓 DOM / 截图

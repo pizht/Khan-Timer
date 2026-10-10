@@ -53,6 +53,7 @@ import {
   isQuestionFinished,
   isSummaryPage,
   readProgress,
+  shouldLeaveSummary,
   readSubmissionOutcome,
 } from './site-profile.js';
 import type {
@@ -134,6 +135,8 @@ class ContentController {
   private pendingRecord: QuestionRecord | null = null;
   /** Set while the learner is on the end-of-exercise summary screen. */
   private inSummary = false;
+  /** URL the summary was entered on, to notice a real navigation away. */
+  private summaryUrl: string | null = null;
   private lastPageCheckAt = 0;
   private summaryView: SummaryView | null = null;
   /**
@@ -493,12 +496,19 @@ class ContentController {
       // exercise chrome exists before the question does, so "no answer form"
       // briefly looks like the summary. Only a page that has actually been
       // timing a question can be finished.
-      if (!this.seenQuestion) return;
+      // Entering also requires a run that has really been timing questions
+      // here, so a page that merely looks like a summary is ignored.
+      if (!this.seenQuestion || this.run === null) return;
       void this.enterSummary(now);
       return;
     }
-    if (!onSummary && this.inSummary) {
-      this.leaveSummary();
+    if (this.inSummary) {
+      const leave = shouldLeaveSummary({
+        onSummary,
+        questionFormPresent: document.querySelector('form[name="answerform"]') !== null,
+        urlChanged: this.summaryUrl !== null && location.href !== this.summaryUrl,
+      });
+      if (leave) this.leaveSummary();
       return;
     }
     if (onSummary) return;
@@ -526,6 +536,7 @@ class ContentController {
 
   private async enterSummary(now: number): Promise<void> {
     this.inSummary = true;
+    this.summaryUrl = location.href;
 
     // The last question never "changed", so its held record is written here.
     // This is also what makes it available as a summary row.
@@ -580,7 +591,11 @@ class ContentController {
 
   private leaveSummary(): void {
     this.inSummary = false;
-    this.seenQuestion = false;
+    // NOTE: `seenQuestion` is deliberately NOT reset. It records that this page
+    // ever timed a question, which is what keeps a still-loading page from
+    // being mistaken for the summary. Resetting it here meant that after a
+    // transient non-summary frame the card could never be injected again.
+    this.summaryUrl = null;
     this.summaryView?.destroy();
     this.summaryView = null;
     // A new attempt: forget the finished run so records start a fresh one.
@@ -595,7 +610,7 @@ class ContentController {
     this.render();
   }
 
-  private findSummaryHost(): { element: Element; insert: 'after-host' | 'append' } | null {
+  private findSummaryHost(): { element: Element; insert: 'before-host' | 'append' } | null {
     for (const strategy of SUMMARY_HOST) {
       let element: Element | null = null;
       try {
