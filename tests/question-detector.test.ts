@@ -30,6 +30,7 @@ import {
   completionTriggerFor,
   exerciseKeyFromUrl,
   isQuestionFinished,
+  isStartCardPresent,
   isSummaryPage,
   progressLabel,
   shouldLeaveSummary,
@@ -886,6 +887,26 @@ describe('site-profile: isSummaryPage', () => {
     expect(isSummaryPage(document)).toBe(false);
   });
 
+  it('is false on the intro card that quiz / test / challenge pages show first', () => {
+    // Regression: these pages put a start card in front of the questions. From
+    // the outside it looks exactly like the summary - exercise chrome present,
+    // no answer form, no progress marker - and a naive check reported "summary"
+    // on a page where the learner had not even started.
+    document.body.innerHTML = `
+      <div data-testid="content-panel-wrapper">
+        <div class="bibliotron-exercise">
+          <div data-testid="start-task-card-summary">
+            <h1>Time for a quiz?</h1>
+            <p>Get ready for questions on the unit so far. 5 questions · 5-10 minutes</p>
+            <button>Let\u2019s go</button>
+          </div>
+        </div>
+      </div>
+    `;
+    expect(isStartCardPresent(document)).toBe(true);
+    expect(isSummaryPage(document)).toBe(false);
+  });
+
   it('is false when only the answer form is missing but progress markers remain', () => {
     // Guards against treating a transient mid-render state as the summary.
     document.body.innerHTML = `
@@ -1035,5 +1056,34 @@ describe('site-profile: shouldLeaveSummary', () => {
     expect(
       shouldLeaveSummary({ onSummary: false, questionFormPresent: false, urlChanged: true }),
     ).toBe(true);
+  });
+});
+
+/* ================================================================== *
+ * Quiz / unit test / course challenge intro card
+ * ================================================================== */
+
+describe('site-profile: isStartCardPresent', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('is false on an ordinary question page', () => {
+    document.body.innerHTML = khanDom({ progressIndex: 0 });
+    expect(isStartCardPresent(document)).toBe(false);
+  });
+
+  it('is false on the end-of-exercise summary', () => {
+    document.body.innerHTML = `
+      <div class="bibliotron-exercise">
+        <div data-testid="eot-phantom-user-registration"><h1>Exercise complete!</h1></div>
+      </div>`;
+    expect(isStartCardPresent(document)).toBe(false);
+  });
+
+  it('is true on the intro card', () => {
+    document.body.innerHTML =
+      '<div data-testid="start-task-card-summary"><button>Let\u2019s go</button></div>';
+    expect(isStartCardPresent(document)).toBe(true);
   });
 });

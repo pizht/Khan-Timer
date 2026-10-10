@@ -42,6 +42,8 @@ interface StatusResponse {
   };
   warning: string | null;
   lastEvent: string;
+  /** The page is showing a "Let's go" intro card instead of a question. */
+  startCard?: boolean;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -242,7 +244,10 @@ function paintStatus(response: StatusResponse): void {
   const statusText = el('status-text');
   const diag = response.diagnostics;
 
-  if (!diag.regionFound) {
+  if (response.startCard) {
+    statusText.textContent = '尚未开始：请点击页面上的「Let\u2019s go」';
+    statusText.className = 'status-value warn';
+  } else if (!diag.regionFound) {
     statusText.textContent = '未找到题目区域（此页面暂不支持）';
     statusText.className = 'status-value bad';
   } else if (diag.confidence === 'none') {

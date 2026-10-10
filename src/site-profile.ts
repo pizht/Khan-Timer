@@ -341,9 +341,28 @@ export function exerciseKeyFromUrl(rawUrl: string, doc?: ParentNode): string {
  * structural check holds either way.
  */
 export function isSummaryPage(doc: ParentNode): boolean {
+  // [VER] The intro card that quiz / unit-test / course-challenge pages show
+  // BEFORE the questions looks exactly like the summary from the outside: the
+  // exercise chrome is present, but there is no answer form and no progress
+  // marker. Observed on all three page types, where a naive check reported
+  // "summary" on a page where the learner had not even started. Excluding the
+  // card by its own testid keeps the two apart.
+  if (doc.querySelector('[data-testid="start-task-card-summary"]')) return false;
   if (doc.querySelector('form[name="answerform"]')) return false;
   if (doc.querySelectorAll('[data-testid^="exercise-progress-"]').length > 0) return false;
   return doc.querySelector('.bibliotron-exercise') !== null;
+}
+
+/**
+ * The control that begins a quiz / unit test / course challenge.
+ *
+ * Those page types put an intro card in front of the questions ("Time for a
+ * quiz? … 5 questions • 5-10 minutes" / "Ready for a challenge? …") whose button
+ * is labelled "Let's go" with a typographic apostrophe [OBS]. Recognised so the
+ * extension can tell "not started yet" apart from "nothing to time here".
+ */
+export function isStartCardPresent(doc: ParentNode): boolean {
+  return doc.querySelector('[data-testid="start-task-card-summary"]') !== null;
 }
 
 /**

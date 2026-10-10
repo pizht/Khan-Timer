@@ -307,9 +307,11 @@ export class OverlayView {
     this.refs = null;
   }
 
+  /** Show or hide the whole panel. Driven by the controller, not by settings. */
   setVisible(visible: boolean): void {
     if (!this.refs) return;
-    this.refs.host.style.display = visible ? '' : 'none';
+    const next = visible ? '' : 'none';
+    if (this.refs.host.style.display !== next) this.refs.host.style.display = next;
   }
 
   applySettings(settings: Settings): void {
@@ -321,7 +323,9 @@ export class OverlayView {
     this.refs.collapseBtn.textContent = collapsed ? '+' : '–';
     this.refs.collapseBtn.title = collapsed ? '展开面板' : '折叠面板';
     this.refs.collapseBtn.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
-    this.setVisible(settings.overlayVisible);
+    // Visibility is deliberately NOT set from `settings.overlayVisible` here:
+    // the controller decides it from whether a question is being timed, so that
+    // changing a setting cannot flash the panel onto a page with no question.
     this.applyPosition(settings.overlayPosition);
   }
 

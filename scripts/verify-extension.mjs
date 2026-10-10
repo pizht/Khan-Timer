@@ -450,9 +450,19 @@ async function main() {
     }
     check('content script injects the panel host', Boolean(panel?.present));
     check('panel uses Shadow DOM isolation', Boolean(panel?.shadow));
+
+    // The panel is shown once a question is actually being timed (so it stays
+    // off course pages and videos), which on a fresh page load is a moment after
+    // the host element appears. Wait for it rather than sampling once.
+    let panelVisible = panel?.visible === true;
+    for (let i = 0; i < 24 && !panelVisible; i += 1) {
+      await sleep(500);
+      panel = await cdp.evaluate(READ_PANEL).catch(() => null);
+      panelVisible = panel?.visible === true;
+    }
     check(
-      'panel is visible',
-      Boolean(panel?.visible),
+      'panel is visible once a question is being timed',
+      panelVisible,
       `host.style.display=${JSON.stringify(panel?.hostDisplay)} classes=${panel?.statusClasses}`,
     );
 
@@ -1138,6 +1148,114 @@ async function main() {
         return true;
       })()`);
       check('settings can be restored to defaults', true);
+    }
+
+    // 13. The floating panel tracks whether a question is being timed, so it
+    //     stays off pages with nothing to time (course pages, video pages, and
+    //     the intro card that quiz / unit-test / course-challenge pages show
+    //     before the learner starts).
+    {
+      const panelVisibleOn = async (target) => (await target.evaluate(READ_PANEL))?.visible === true;
+
+      // 13a. A plain course page is not an exercise: no panel.
+      const courseCdp = await openTarget(
+        'https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtraction',
+      );
+      try {
+        await sleep(9000);
+        const state = await courseCdp.evaluate(PAGE_STATE);
+        check(
+          'no panel on a course page with nothing to time',
+          (await panelVisibleOn(courseCdp)) === false,
+          `summary=${state?.summary} hasAnswerForm=${state?.hasAnswerForm} progress=${state?.progressAll?.length}`,
+        );
+      } catch (error) {
+        check('course page could be checked', false, error.message);
+      } finally {
+        if (courseCdp.targetId) {
+          await fetch(`http://127.0.0.1:${PORT}/json/close/${courseCdp.targetId}`).catch(() => undefined);
+        }
+      }
+
+      // 13b. A quiz sits behind a "Let's go" intro card. The panel must appear
+      //      only once a question is actually on screen.
+      const quizUrl =
+        'https://www.khanacademy.org/test-prep/v2-sat-math/x0fcc98a58ba3bea7:algebra-easier/' +
+        'x0fcc98a58ba3bea7:graphs-of-linear-systems-and-inequalities-easier/quiz/' +
+        'x0fcc98a58ba3bea7:algebra-easier-quiz-2';
+      const quizCdp = await openTarget(quizUrl);
+      try {
+        for (let i = 0; i < 40; i += 1) {
+          const ready = await quizCdp
+            .evaluate(`!!document.getElementById('khan-academy-timer-host')`)
+            .catch(() => false);
+          if (ready) break;
+          await sleep(1000);
+        }
+        await sleep(6000);
+
+        const intro = await quizCdp.evaluate(PAGE_STATE);
+        const introStart = await quizCdp.evaluate(`(() => {
+          return !!document.querySelector('[data-testid="start-task-card-summary"]');
+        })()`);
+        check(
+          'the quiz shows its intro card before starting',
+          introStart === true,
+          `startCard=${introStart} hasAnswerForm=${intro?.hasAnswerForm}`,
+        );
+        // Give the panel every chance to appear before calling it hidden.
+        let introVisible = await panelVisibleOn(quizCdp);
+        for (let i = 0; i < 8 && !introVisible; i += 1) {
+          await sleep(500);
+          introVisible = await panelVisibleOn(quizCdp);
+        }
+        check(
+          'no panel before the quiz is started',
+          introVisible === false,
+          `visible=${introVisible}`,
+        );
+
+        const started = await quizCdp.evaluate(`(() => {
+          const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          for (const b of Array.from(document.querySelectorAll('button, [role="button"]'))) {
+            if (b.disabled) continue;
+            const label = norm(b.textContent) || norm(b.getAttribute('aria-label'));
+            if (/^let.s go/.test(label)) { b.click(); return label; }
+          }
+          return null;
+        })()`);
+        check('the quiz can be started', Boolean(started), `clicked=${JSON.stringify(started)}`);
+        await sleep(9000);
+
+        const inQuiz = await quizCdp.evaluate(PAGE_STATE);
+        check(
+          'a question is detected inside the quiz',
+          (inQuiz?.progressAll?.length ?? 0) > 0 && inQuiz?.hasAnswerForm === true,
+          `progress=${inQuiz?.progressAll?.length} hasAnswerForm=${inQuiz?.hasAnswerForm}`,
+        );
+        let quizVisible = await panelVisibleOn(quizCdp);
+        for (let i = 0; i < 24 && !quizVisible; i += 1) {
+          await sleep(500);
+          quizVisible = await panelVisibleOn(quizCdp);
+        }
+        check(
+          'the panel appears once the quiz has a question',
+          quizVisible === true,
+          `visible=${quizVisible}`,
+        );
+        const quizPanel = await quizCdp.evaluate(READ_PANEL);
+        check(
+          'the panel reports the quiz question',
+          /进度/.test(quizPanel?.meta ?? ''),
+          `meta=${quizPanel?.meta}`,
+        );
+      } catch (error) {
+        check('quiz page could be checked', false, error.message);
+      } finally {
+        if (quizCdp.targetId) {
+          await fetch(`http://127.0.0.1:${PORT}/json/close/${quizCdp.targetId}`).catch(() => undefined);
+        }
+      }
     }
 
   } finally {

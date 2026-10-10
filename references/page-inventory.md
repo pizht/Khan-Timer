@@ -31,7 +31,7 @@
 | 测试日期 | 2025-10-09 |
 | 浏览器 | Microsoft Edge 154.0.4258.62 |
 
-**验证结果：** 通过 `scripts/verify-extension.mjs` 驱动，**60/60 项检查全部通过**：
+**验证结果：** 通过 `scripts/verify-extension.mjs` 驱动，**67/67 项检查全部通过**：
 
 | 验证项 | 结果 |
 |---|---|
@@ -77,6 +77,31 @@
 | 验证结果 | ✅ 可打开；渲染全部设置控件；读取并写入 `chrome.storage.local`；列出记录；清除记录生效 |
 
 ---
+
+### 1.3 SAT test-prep 页面类型（`/test-prep/...`）
+
+同一套结构在 SAT test-prep 的四类页面上实测一致（详见 `observations.md` 第 12 节）：
+
+| 页面类型 | URL 形态 | 开始前 | 开始后进度点 | 分级 |
+|---|---|---|---|---|
+| 练习 | `/e/<slug>` | 直接是题目 | 4 | `Automated-tested`（结构）+ `Edge-verified`（面板显隐） |
+| 测验 Quiz | `/quiz/<slug>` | 有 `Let’s go` 介绍卡片 | 5 | `Automated-tested`（结构）+ `Edge-verified`（面板显隐） |
+| 单元测试 Unit test | `/test/<slug>` | 同上 | 10 | `Automated-tested`（结构） |
+| 课程挑战 Course challenge | `/test/<slug>` | 同上 | 30 | `Automated-tested`（结构） |
+
+**结论：** 这些页面与已验证练习页**结构完全一致**，不需要新增选择器。
+唯一的改动是「开始卡片」会让结束页判定误报，已修复（见 `observations.md` 第 12.2 节）。
+
+### 1.4 计时面板的显示时机
+
+| 场景 | 面板 | 验证 |
+|---|---|---|
+| 正在给某道题计时 | **显示** | ✅ 真实 Edge |
+| 课程页 / 视频页（没有题目） | **不显示** | ✅ 真实 Edge |
+| 测验/单元测试/课程挑战的「开始卡片」 | **不显示** | ✅ 真实 Edge |
+| 结束页 | **不显示** | ✅ 真实 Edge |
+| 题目识别失败（未识别） | **不显示** | ✅ 真实 Edge |
+| 已开始计时但识别暂时不确定 | **显示**（保留暂停/重置） | 由实现规则保证 |
 
 ## 2. 自动化测试过（`Automated-tested`）
 

@@ -588,3 +588,77 @@ tests/question-detector.test.ts
 「如果第一次回答错误，还要保存第一次提交答案的时间戳」一致，
 结束页表格上该题显示「答错」标记也是准确的（它表示**第一次提交**的结果，
 而不是这题最终有没有做对）。
+
+---
+
+## 12. SAT test-prep 页面类型（`/test-prep/...`）
+
+**背景：** 用户报告计时面板在「未识别」的页面上也显示，并给出 4 个 SAT test-prep URL
+作为应该计时的页面。因此先采集这 4 个 URL 的真实 DOM，确认现有选择器是否命中。
+
+**方式：** 真实 Edge + CDP。加载页面 → 记录选择器命中情况 → 若有「开始」控件则点击 →
+再次记录。脚本见 `references/tools/cdp-page-check.mjs`。
+
+### 12.1 结论：结构完全相同，无需新增选择器
+
+| 页面类型 | URL 片段 | 开始前 | 点击 `Let’s go` 之后 |
+|---|---|---|---|
+| 练习（exercise） | `/e/v2-graphs-of-linear-systems-…-1` | **直接就是题目** | — |
+| 测验（quiz） | `/quiz/x0fcc98a58ba3bea7:algebra-easier-quiz-2` | 介绍卡片 | 题目，**5** 个进度点 |
+| 单元测试（unit test） | `/test/x0fcc98a58ba3bea7:algebra-easier-unit-test` | 介绍卡片 | 题目，**10** 个进度点 |
+| 课程挑战（course challenge） | `/test/x0fcc98a58ba3bea7:course-challenge` | 介绍卡片 | 题目，**30** 个进度点 |
+
+开始之后，三种页面与已验证的普通练习页**结构完全一致**：
+
+```
+form[name="answerform"]            ✓ 存在
+.framework-perseus / .perseus-renderer  ✓ 存在
+exercise-progress-<i>-<state>[-current] ✓ 存在（5 / 10 / 30 个）
+exercise-check-answer              ✓ 存在
+exercise-skip-button               ✓ 存在
+content-library-footer             ✓ 存在
+data-exercise-id                   ✓ 存在（每页不同）
+```
+
+因此**不需要为 SAT 页面新增任何选择器** —— 进度索引、题目区域、按钮的规则全部沿用。
+实测这些页面还出现了 `input-with-examples`、`select`、`textarea`、`checkbox` 等多种
+控件，`widgetSignatureOf()` 的通用标记可以覆盖。
+
+### 12.2 关键发现：开始卡片会让「结束页」判定误报
+
+测验 / 单元测试 / 课程挑战在开始**之前**显示一张介绍卡片：
+
+```
+Quiz 2
+Time for a quiz?
+Get ready for questions on the unit so far.
+5 questions • 5 - 10 minutes
+[ Let’s go ]
+```
+
+它的 testid 是 **`start-task-card-summary`**。
+
+从外部看，这个状态与「练习结束页」**一模一样**：练习外壳在、没有答题表单、没有进度标记。
+朴素的结构判定会把三个页面全部报成 `isSummaryPage = true` —— 实测确实如此：
+
+| 页面 | 开始前 `isSummaryPage` | 实际 |
+|---|---|---|
+| quiz | **true（误报）** | 还没开始 |
+| unit test | **true（误报）** | 还没开始 |
+| course challenge | **true（误报）** | 还没开始 |
+
+**修复：** `isSummaryPage()` 增加一条排除 —— 页面上存在 `start-task-card-summary` 时
+一律不算结束页。同时新增 `isStartCardPresent()`，让弹出面板把这种情况说明为
+「尚未开始：请点击页面上的「Let's go」」，而不是「此页面暂不支持」。
+
+### 12.3 开始卡片上的「开始」按钮文案
+
+按钮文案是 **`Let’s go`**，用的是**排版撇号 U+2019**，不是 `Start`。
+（早期探针按 `/^start/` 匹配，因此完全没有找到它 —— 记录在此以免重复踩坑。）
+验证脚本与文档统一按 `let.s go` 匹配。
+
+### 12.4 计时面板的显示时机
+
+结合上面的观测，面板的显示规则确定为「**只有当真的在给某道题计时时才显示**」：
+开始卡片上、课程页上、视频页上都不显示；点了 `Let’s go` 且题目出现后立即显示。
+详见 `README.md` 的「什么时候显示计时面板」。

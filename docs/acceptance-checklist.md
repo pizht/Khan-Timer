@@ -16,7 +16,7 @@
 ```bash
 pnpm install
 pnpm run verify          # 类型检查 + 单元测试(165) + 构建 + dist 产物检查(56)
-pnpm run verify:edge     # 真实 Edge 端到端验证(32)
+pnpm run verify:edge     # 真实 Edge 端到端验证(67)
 ```
 
 ---
@@ -76,6 +76,24 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 1 | 点击 Skip 后停止本题计时 | ✅ | 只有**确认**跳过才停表（点 Cancel 不停）。真实 Edge 端到端：`skip asks for confirmation first`、`the skip confirmation can be triggered`、`confirming a skip stops the timer`（`0:04 → 0:05`，随后 3.5 s 保持不变）、`answering after a skip does not resume the stopped timer`。规则由纯函数 `completionTriggerFor()` 实现，单元测试覆盖「答错不停」「确认跳过才停」「取消不停」等 6 种情形。 |
 | 2 | 点击 Check 判定正确后停止本题计时 | ✅ | 真实 Edge：`the page accepted the correct answer`（`state=correct`）、`answering correctly stops the timer`（`status-finished`）、`the panel shows the completed state`、`the pause control is disabled once the question is done`、`the frozen value does not creep upwards afterwards`（3.5 s 后仍为 `0:04`）。答错时**不停表**（可重试），由 `completionTriggerFor()` 与单元测试保证。 |
 | 3 | 做完所有题后点击 `Show summary`，在结束页显示本轮每题用时 | ✅ | 真实 Edge：`the end-of-exercise summary screen is reached`、`the summary card is injected`、`the summary lists every question of this run`、`each summary row shows a duration`、`the summary shows a total`、`the summary marks the skipped question`。实测卡片内容：`本轮每题用时 / 共 3 题 · 合计 0:15 / 第 1 题答对 0:04 / 第 2 题已跳过 0:05 / 第 3 题 0:06`。 |
+
+### 追加修正：计时面板应当只在有题目时显示（用户报告）
+
+| 项目 | 内容 |
+|---|---|
+| **要求** | 面板显示与题目识别状态同步：未识别时不显示，识别到题目时显示 |
+| **实现** | `shouldShowPanel()`：仅当 `overlayVisible` 为真、不在结束页、**且 `engine !== null`**（即确实在给某道题计时）时显示。已开始计时但识别临时不确定时**保持显示**，避免面板一闪消失 |
+| **顺带修复** | 测验 / 单元测试 / 课程挑战页面的「介绍卡片」（`data-testid="start-task-card-summary"`）会让结束页判定**误报为 true**（外观同样是「有练习外壳、无答题表单、无进度标记」）。已按该 testid 排除，并新增 `isStartCardPresent()` 让弹出面板提示「尚未开始：请点击页面上的「Let's go」」 |
+| **可见提示的落点** | 识别失败时面板不显示，原因改由**扩展弹出面板**呈现（未找到题目区域、命中策略、错误列表），满足需求 8.3「提供可见提示**或**可用的手动恢复方式」 |
+| **单元测试** | `isSummaryPage` 新增「介绍卡片不算结束页」用例；新增 `isStartCardPresent` 3 条 |
+| **端到端** | 新增 6 项真实 Edge 检查：课程页无面板、测验介绍卡片上无面板、点 `Let's go` 后识别到题目（进度 5）、随后面板出现并显示 `进度 1 of 5 识别：题目ID` |
+
+### SAT test-prep 页面类型
+
+实测 `/test-prep/v2-sat-math/...` 的四类页面（练习、测验、单元测试、课程挑战），
+开始答题后与已验证的普通练习页**结构完全一致**，**无需新增选择器**。
+详见 [`references/observations.md`](../references/observations.md) 第 12 节与
+[`docs/compatibility.md`](compatibility.md) 第 1.4 / 1.5 节。
 
 ### 追加修正：答错后重答正确没有停表（用户报告）
 
@@ -186,7 +204,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 165 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 169 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

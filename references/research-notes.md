@@ -265,8 +265,20 @@ references/
     ├── cdp-extension-diagnostics.mjs # 加载扩展后读出检测器诊断（排查「面板卡住」）
     ├── sanitize-snapshots.py         # 从原始抓取提取脱敏局部样本
     ├── capture-with-extension.mjs    # 加载扩展后截图（悬浮面板 / 弹出面板）
-    └── capture-summary.mjs           # 做完整套题并在结束页截图「本轮每题用时」
+    ├── capture-summary.mjs           # 做完整套题并在结束页截图「本轮每题用时」
+    └── cdp-page-check.mjs            # 判定某个页面类型是否被现有选择器识别
 ```
+
+### 2.8 判定一个新页面类型是否受支持
+
+```bash
+node references/tools/cdp-page-check.mjs <outDir> <url> [url...]
+```
+
+它加载真实页面，报告 `src/site-profile.ts` 里每条策略的命中情况，并且在发现
+`Let’s go` 之类的「开始」控件时先点一下再报告 —— 因为测验 / 单元测试 / 课程挑战
+在开始前根本没有题目。SAT test-prep 的四类页面就是这样确认的
+（结论见 `observations.md` 第 12 节：结构完全一致，无需新增选择器）。
 
 ### 2.7 驱动整套练习到结束页
 

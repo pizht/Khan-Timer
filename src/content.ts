@@ -51,6 +51,7 @@ import {
   completionTriggerFor,
   exerciseKeyFromUrl,
   isQuestionFinished,
+  isStartCardPresent,
   isSummaryPage,
   readProgress,
   shouldLeaveSummary,
@@ -550,7 +551,6 @@ class ContentController {
     }
     // Stop question tracking: there is no question on this screen.
     this.detector?.stop();
-    this.overlay?.setVisible(false);
     this.warning = null;
     this.lastEventText = '本轮已完成，已显示每题用时';
 
@@ -605,7 +605,6 @@ class ContentController {
     this.pendingRecord = null;
     this.skipInitiated = false;
     this.detector?.start();
-    this.overlay?.setVisible(this.settings.overlayVisible);
     this.lastEventText = '检测到新一轮答题';
     this.render();
   }
@@ -702,8 +701,28 @@ class ContentController {
     await saveSession(this.area, engine.serialize(now));
   }
 
+  /**
+   * Should the floating panel be on screen?
+   *
+   * It tracks whether a question is actually being timed: the panel appears
+   * when one is detected and disappears when there is nothing to time. That
+   * keeps it off course pages, videos and any page whose structure is not
+   * recognised, instead of showing a clock that measures nothing.
+   *
+   * An engine that exists but whose detection has since become `uncertain`
+   * keeps the panel visible on purpose: the learner is mid-question and still
+   * needs the pause / reset controls. Hiding it there would make a transient
+   * page hiccup look like the extension had vanished.
+   */
+  private shouldShowPanel(): boolean {
+    if (!this.settings.overlayVisible) return false; // user's master switch
+    if (this.inSummary) return false; // nothing is being timed here
+    return this.engine !== null;
+  }
+
   private render(): void {
     if (!this.overlay) return;
+    this.overlay.setVisible(this.shouldShowPanel());
     const now = Date.now();
     const engine = this.engine;
     const snapshot = engine ? engine.snapshot(now) : null;
@@ -921,6 +940,9 @@ class ContentController {
       diagnostics: this.diagnostics,
       warning: this.warning,
       lastEvent: this.lastEventText,
+      // Quiz / unit-test / course-challenge pages sit behind an intro card, so
+      // "no question yet" there means "not started", not "unsupported".
+      startCard: isStartCardPresent(document),
     };
   }
 
