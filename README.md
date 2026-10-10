@@ -30,7 +30,9 @@ Microsoft Edge（Chromium）+ Manifest V3 + TypeScript。
 
 ## 快速开始
 
-需要 Node.js ≥ 20（开发时使用 v24）。本仓库使用 **pnpm**。
+需要 Node.js ≥ 20（开发时使用 v24）。本仓库使用 **pnpm**，
+版本在 `package.json` 的 `packageManager` 中固定（`pnpm@12.11.2`），
+启用 Corepack 后会自动使用该版本。
 
 ```bash
 pnpm install

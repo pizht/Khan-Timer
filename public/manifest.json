@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Khan Academy Timer",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "可汗学院练习题与测验的题目计时器：自动识别切题、正计时/倒计时、悬浮面板与本地记录。",
   "minimum_chrome_version": "114",
   "permissions": ["storage", "activeTab"],
