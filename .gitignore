@@ -14,6 +14,7 @@ node_modules
 .pnpm-store
 .npm-cache
 .yarn
+.corepack
 
 # --- Build output ----------------------------------------------------------
 # `pnpm run build` regenerates this from public/ + src/ via scripts/build.mjs.

@@ -1,9 +1,10 @@
 {
   "name": "khan-academy-timer",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Question timer overlay for Khan Academy exercises and quizzes. Microsoft Edge (Chromium), Manifest V3.",
   "type": "module",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:watch": "node scripts/build.mjs --watch",
@@ -23,11 +24,5 @@
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  },
-  "pnpm": {
-    "comment": "Vitest pulls in Rollup, whose platform-native binding cannot be loaded in environments where the Node binary runs under the macOS hardened runtime. The pure-WebAssembly Rollup is API-identical and removes that native dependency; see README 'Troubleshooting'.",
-    "overrides": {
-      "rollup": "npm:@rollup/wasm-node@4.64.2"
-    }
   }
 }
