@@ -152,11 +152,31 @@
 | 正在计时的题目 | 显示 | ✅ `the panel appears once the quiz has a question` |
 | 课程页（没有题目） | 不显示 | ✅ `no panel on a course page with nothing to time` |
 | 测验的介绍卡片 | 不显示 | ✅ `no panel before the quiz is started` |
+| **单页应用内切到另一个练习（含它的介绍卡片）** | 不显示 | 单元测试 `tests/controller.test.ts`（未跑真实站点，见下） |
 | 结束页 | 不显示 | ✅ `the float panel is hidden on the summary screen` |
 | 识别失败（未识别） | 不显示 | ✅ 同上（没有 engine 就没有面板） |
 
 识别失败时的可见提示改由**扩展弹出面板**承担（显示「未找到题目区域」、
 命中策略、错误列表），满足需求 8.3「提供可见提示**或**可用的手动恢复方式」中的前者。
+
+### 1.5.1 切换练习（本轮修复，未跑真实站点）
+
+可汗学院是单页应用：从练习 A 切到练习 B 只换地址，页面不重新加载。此前旧练习的
+计时器会留在内存里，于是：
+
+- 练习 B 的「Ready to practice?」页面上显示着练习 A 的读数，并且还在继续增长；
+- 若 B 的第一题和 A 停在同一进度（都是「1 of N」），它会被当成「题目没变」，
+  接着 A 那份进行中的会话被当成一次普通切题结算掉 —— 回到 A 时已累计的用时消失，
+  停表待写的那条记录也一起丢掉。
+
+现在：地址一变即作废旧题目身份；只要页面已不属于当前练习，本题就**冻结并按
+`session:<练习路径>` 暂存**（答对/跳过的待写记录立刻落盘），面板不再显示旧练习读数；
+回到同一题时从离开时的读数继续，在另一个练习里花的时间不计入。
+
+验证方式为 jsdom 单元测试（`tests/controller.test.ts` 3 例，配内存版
+`chrome.storage.local`），**尚未**在真实 Edge + 真实站点上用
+`scripts/verify-extension.mjs` 重跑；该脚本需要真实登录环境并逐题作答，
+已在 `docs/known-limitations.md` 第 22 条如实记录。
 
 ### 重要限制：连续切题次数不足
 

@@ -555,10 +555,38 @@ export class QuestionDetector {
 
   private pendingStrategy: SelectorStrategyName | null = null;
 
+  /**
+   * Has the document moved to another URL since the last observation?
+   *
+   * When it has, every detection state is invalid: the identity held for the
+   * previous page must never be compared with anything observed on the new one.
+   * Called from `evaluate()` itself, not only from the poll, because a mutation
+   * on the new page can reach the decider first.
+   */
+  private syncUrl(): boolean {
+    if (location.href === this.lastUrl) return false;
+    this.lastUrl = location.href;
+    this.decider.reset();
+    this.attachRegion();
+    return true;
+  }
+
   /** Navigation-ish polling: cheap, and immune to SPA history quirks. */
   private poll(): void {
     this.pollTicks += 1;
     if (this.stopped) return;
+
+    // A URL change is checked FIRST, before anything else in this method can
+    // return early. An exercise's "Ready to practice?" start card (and any
+    // non-exercise page) has no footer and no question region, so the
+    // progress-observer branch below used to return forever and the URL check
+    // was never reached: the next exercise's first question was then compared
+    // with the previous exercise's identity and committed as an ordinary
+    // question change.
+    if (this.syncUrl()) {
+      this.evaluate('url-change');
+      return;
+    }
 
     // The progress marker lives in the exercise footer, which can appear AFTER
     // the question region during a real page load. Without this the progress
@@ -567,15 +595,6 @@ export class QuestionDetector {
     if (!this.progressObserver) {
       this.attachRegion();
       this.evaluate('progress-observer-attached');
-      return;
-    }
-
-    if (location.href !== this.lastUrl) {
-      this.lastUrl = location.href;
-      // A hard navigation to a different page invalidates all detection state.
-      this.decider.reset();
-      this.attachRegion();
-      this.evaluate('url-change');
       return;
     }
     if (!this.region || !this.region.isConnected) {
@@ -716,17 +735,22 @@ export class QuestionDetector {
 
   private evaluate(reason: string): void {
     if (this.stopped) return;
+    // A navigation invalidates the identity of the page being left, whatever
+    // triggered this evaluation (poll, mutation, an explicit re-evaluation).
+    // Doing it here is what keeps an SPA route change from being mistaken for a
+    // question change and from closing the previous exercise's session.
+    const navigated = this.syncUrl();
     this.lastEvaluateAt = Date.now();
     this.evaluateCount += 1;
     this.lastEvaluateAtMs = this.lastEvaluateAt;
-    this.lastReason = reason;
+    this.lastReason = navigated ? 'url-change' : reason;
     const snapshot = this.buildSnapshot();
     this.lastSnapshot = snapshot;
     const event = this.decider.observe(snapshot);
     this.callbacks.onEvent(event, snapshot);
     this.reportProgressStateChange(event, snapshot);
     this.armPendingConfirmation(event);
-    this.emitDiagnostics(true, `evaluate: ${reason}`);
+    this.emitDiagnostics(true, `evaluate: ${this.lastReason}`);
   }
 
   /**

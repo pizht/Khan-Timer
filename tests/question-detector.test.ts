@@ -508,6 +508,46 @@ describe('QuestionDetector — DOM adapter', () => {
     expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
   });
 
+  /*
+   * Switching practice A -> practice B inside the SPA.
+   *
+   * B's "Ready to practice?" start card has no answer form, no progress marker
+   * and no exercise footer, so nothing about B is observable yet - and the
+   * index of B's first question is very often the same "1 of N" as A's. Unless
+   * the URL change invalidates A's identity, B's first question is
+   * byte-identical to A's and is reported as "same question": practice A's
+   * engine then stays alive, keeps counting, and is later closed as if A's
+   * question had changed - which is how the in-flight session was destroyed.
+   */
+  it('treats an SPA move to another exercise as a new question, not a continuation', () => {
+    start(khanDom({ progressIndex: 0 }));
+    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+
+    window.history.pushState({}, '', '/math/cc-third-grade-math/e/other-practice');
+    document.body.innerHTML =
+      '<div class="bibliotron-exercise">' +
+      '<div data-testid="start-task-card-summary">Ready to practice?</div>' +
+      '</div>';
+
+    vi.setSystemTime(T0 + 2000);
+    detector.reevaluate('start-card-of-other-exercise');
+
+    // The previous exercise's identity must be gone completely.
+    expect(detector.getCurrentKey()).toBeNull();
+    expect(last()).toMatchObject({ type: 'uncertain' });
+
+    // The new exercise's first question sits at the SAME progress position, so
+    // its identity string is byte-identical to the previous exercise's.
+    document.body.innerHTML = khanDom({ progressIndex: 0, stem: 'Multiply. 12x4' });
+    vi.advanceTimersByTime(700);
+
+    expect(last()).toMatchObject({ type: 'question-changed', from: null });
+    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+    expect(events.some((e) => e.type === 'same-question')).toBe(false);
+
+    window.history.pushState({}, '', '/');
+  });
+
   it('reseed emits a change for the same identity ("Start over")', () => {
     start(khanDom());
     vi.setSystemTime(T0 + 20_000);

@@ -19,6 +19,7 @@ import {
   loadRecords,
   loadSession,
   loadSettings,
+  parkedSession,
   pruneSessions,
   sanitizeRecords,
   sanitizeSession,
@@ -27,6 +28,7 @@ import {
   saveSettings,
   sessionKey,
 } from '../src/storage.js';
+import { TimerEngine } from '../src/timer-engine.js';
 import type { QuestionRecord, TimerSerialized } from '../src/types.js';
 
 /** In-memory stand-in for `chrome.storage.local`. */
@@ -361,6 +363,41 @@ describe('in-flight sessions (spec 2.2 — closing the page keeps the data)', ()
     const area = new FakeArea();
     area.failOnSet = true;
     await expect(saveSession(area, makeSession())).resolves.toBe(false);
+  });
+
+  it('keeps the time a learner had spent when they left for another exercise', () => {
+    // 30s spent on question 4 of exercise A, then the learner switched to
+    // exercise B for 10 minutes and came back.
+    const engine = new TimerEngine({
+      mode: 'countup',
+      limitMs: null,
+      questionKey: 'id:progress:4 of 7',
+      exerciseKey: '/math/x/e/a',
+      now: NOW,
+    });
+    const leftAt = NOW + 30_000;
+    const frozen = engine.finish(leftAt, 'navigation');
+    const parked = parkedSession(engine.serialize(leftAt), frozen.elapsedMs, leftAt);
+    const backAt = leftAt + 10 * 60_000;
+    const restored = TimerEngine.restore(parked, backAt);
+
+    // The 10 minutes in the other exercise are not this question's time ...
+    expect(restored.snapshot(backAt).elapsedMs).toBe(30_000);
+    // ... and the clock carries on from there once the learner is back.
+    expect(restored.snapshot(backAt + 5_000).elapsedMs).toBe(35_000);
+    expect(restored.getPhase()).toBe('running');
+  });
+
+  it('parks a session that was paused, keeping pause time and resuming running', async () => {
+    const area = new FakeArea();
+    const parked = parkedSession(
+      makeSession({ phase: 'paused', accumulatedMs: 4000, pausedMs: 2000 }),
+      4_000,
+      NOW,
+    );
+    await saveSession(area, parked);
+    const loaded = await loadSession(area, parked.exerciseKey, NOW);
+    expect(loaded).toMatchObject({ phase: 'running', accumulatedMs: 4_000, pausedMs: 2_000 });
   });
 });
 

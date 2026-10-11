@@ -130,6 +130,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 首次提交对错读不到 | 用 350 ms 定时器读反馈，早于页面更新，记录里对错全是 `unknown` | 改用进度状态变化作为权威信号 | `readSubmissionOutcome` 系列 + 端到端 `outcome: "correct"` |
 | 加载中误判结束页 | 页面尚未渲染题目时「无答题表单 + 有练习外壳」成立，被当成结束页 | 必须真的计时过一道题才允许进入结束页 | `isSummaryPage` 系列 |
 | 僵留的待写记录阻塞下一题 | 一旦漏检一次切题，上一题的待写记录会让下一题无法结算，整行丢失 | 索引不同则先落盘旧记录再结算新题 | 由端到端记录数验证 |
+| 切换练习丢掉进行中的计时 | 可汗学院是单页应用，换练习只换地址、不重新加载页面：旧练习的计时器没有被收掉，面板带着旧读数出现在新练习的「Ready to practice?」页并继续增长；如果新练习停在同一进度（都是「1 of N」），新题会被当成「题目没变」，旧练习那份进行中的会话随后被当成一次普通切题结算掉，回到旧练习时已累计用时归零、待写记录也没了 | 地址一变就作废旧题目身份（`syncUrl()`，且在 `evaluate()` 里而不只在轮询里，避免新页面的变更先于地址检查被提交）；只要页面已不属于当前练习就把本题**暂存**：冻结时钟、按 `session:<练习路径>` 保留可续接的会话、已答对/跳过的待写记录立刻落盘；面板只在当前练习的页面上显示 | `tests/controller.test.ts`（3 例，jsdom + 内存版 `chrome.storage.local`）、`treats an SPA move to another exercise as a new question, not a continuation`、`tests/storage.test.ts` 的会话冻结用例 |
 
 ---
 
@@ -148,7 +149,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 7 | 同一道题触发多次 DOM 变化 | ✅ | 单元测试 `suppresses duplicates…`（50 次观察）、`does not switch on an A -> B -> A flap` |
 | 8 | 正计时暂停、恢复和重置 | ✅ | 端到端 3 项 + `tests/timer-engine.test.ts` |
 | 9 | 倒计时暂停、恢复、归零及提示音开关 | ✅ | 端到端超时 3 项；单元测试 `fires expiredJustNow exactly once so the tone cannot repeat`（提示音只响一次）、`resolves expiry correctly when the limit passes while paused`；提示音开关在弹出面板并有端到端写入验证 |
-| 10 | 页面刷新、标签页切换、浏览器休眠后恢复 | ⚠️ | 刷新由单元测试覆盖（会话恢复 + 配置持久化）；休眠由「大跨度时钟跳跃」单元测试覆盖。**真实休眠未实测**（见已知限制第 7 条）。 |
+| 10 | 页面刷新、标签页切换、浏览器休眠后恢复 | ⚠️ | 刷新由单元测试覆盖（会话恢复 + 配置持久化）；**在同一个标签页里切换练习**由 `tests/controller.test.ts` 覆盖（离开时冻结并保留会话、回来后接着计时、已答对的题立刻落盘）；休眠由「大跨度时钟跳跃」单元测试覆盖。**真实休眠未实测**（见已知限制第 7 条）。 |
 | 11 | 本地存储为空、已有记录或写入失败 | ✅ | `tests/storage.test.ts` 全覆盖：空存储、有记录、`failOnSet` / `failOnGet` / `failOnRemove`、无 `chrome` API、数据损坏清洗 |
 | 12 | 页面结构变化导致无法找到题目区域时的降级处理 | ✅ | 单元测试 `goes uncertain, and keeps timing, when the region disappears`；截图 `overlay-degraded-unrecognised.png` |
 
@@ -160,14 +161,14 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 
 | # | 要求 | 状态 | 位置 |
 |---|---|---|---|
-| 1 | 完整 TypeScript 源代码 | ✅ | `src/`（10 个文件）；`pnpm run typecheck` 在 `strict` + `noUncheckedIndexedAccess` 下通过 |
+| 1 | 完整 TypeScript 源代码 | ✅ | `src/`（12 个文件）；`pnpm run typecheck` 在 `strict` + `noUncheckedIndexedAccess` 下通过 |
 | 2 | 可由 Edge 加载的构建输出目录 `dist/` | ✅ | `dist/`（332 KB）；`pnpm run build` 生成；`verify-dist.mjs` 56 项检查通过；已被真实 Edge 加载 |
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
 | 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
 | 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（4 文件 165 用例）；运行说明见 `README.md` → 测试与验证 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 198 用例）；运行说明见 `README.md` → 测试与验证 |
 | 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
-| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（14 条，含未满足的验收项） |
+| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（22 条，含未满足的验收项与切换练习的边界条件） |
 
 ---
 

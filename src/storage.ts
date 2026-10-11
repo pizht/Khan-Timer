@@ -403,6 +403,29 @@ export async function clearSession(
   }
 }
 
+/**
+ * Re-freeze an in-flight session because the learner left the exercise without
+ * finishing the question they were on.
+ *
+ * The clock stops at `elapsedMs` - the time actually spent answering - but the
+ * session is written back as `running`, so returning to the exercise continues
+ * from that value instead of counting the time spent in the other exercise.
+ * This is the same rule as closing and reopening the page (spec 2.2): time
+ * while the learner is somewhere else is not answer time.
+ */
+export function parkedSession(
+  session: TimerSerialized,
+  elapsedMs: number,
+  now: number,
+): TimerSerialized {
+  return {
+    ...session,
+    phase: 'running',
+    accumulatedMs: Math.max(0, elapsedMs),
+    savedAt: now,
+  };
+}
+
 /** Best-effort removal of every stale `session:` entry. */
 export async function pruneSessions(
   area: StorageArea | null,
