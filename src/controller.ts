@@ -154,6 +154,21 @@ export class ContentController {
   /** Position of the question being timed, for the summary rows. */
   private currentQuestionIndex: number | null = null;
   private currentQuestionTotal: number | null = null;
+  /**
+   * True while the page offers no usable question identity — the state the
+   * panel labels 识别：未识别. The clock for the question on screen is paused
+   * and the floating panel is hidden, so a clock that measures nothing is
+   * neither shown nor counted.
+   */
+  private unidentified = false;
+  /**
+   * True while the current question's clock is paused *because* the page
+   * stopped offering an identifiable question.
+   *
+   * Only this flag authorises the automatic resume, so a pause the learner
+   * asked for is never silently undone when detection comes back.
+   */
+  private autoPausedForIdentity = false;
 
   async init(): Promise<void> {
     this.area = chromeStorageArea();
@@ -225,6 +240,13 @@ export class ContentController {
     // numbers are never shown there.
     if (leavingExercise) this.parkCurrentQuestion(event.at);
 
+    // 识别：未识别. The page is not describing a question we can trust, so the
+    // clock of the question on screen is frozen (the engine is KEPT, just
+    // paused) and the panel is hidden. Freezing rather than discarding is what
+    // keeps the question's time, its record and its summary row alive.
+    this.unidentified = !isIdentified(snapshot);
+    if (this.unidentified) this.pauseForMissingIdentity(event.at);
+
     switch (event.type) {
       case 'question-changed': {
         const current = this.engine;
@@ -257,12 +279,71 @@ export class ContentController {
         this.lastEventText = '检测到可能的题目变化，等待确认…';
         break;
       case 'uncertain':
-        // Conservative degradation (spec 2.4): keep timing, tell the user.
-        this.warning = `无法可靠识别题目变化（${event.reason}）。计时保持不变，可用"重置本题"手动开始。`;
-        this.lastEventText = '识别不确定';
+        // Conservative degradation (spec 2.4): never reset or discard the time
+        // already spent. The clock is frozen instead of being left running, so
+        // a stretch of page the extension cannot read is not billed to the
+        // question; the engine survives, so the question can still be finished
+        // and still reaches the summary.
+        this.warning = this.engine
+          ? `无法可靠识别当前题目（${event.reason}）。本题计时已暂停，重新识别到本题后会自动继续。`
+          : `未识别到题目（${event.reason}）。面板已隐藏，识别到题目后会自动开始计时。`;
+        this.lastEventText = '识别不确定，本题计时已暂停';
         break;
     }
+
+    // The question that was auto-paused is identifiable again: carry on from
+    // the exact value it was frozen at. A different question — or a pause the
+    // learner asked for — is left alone.
+    if (!this.unidentified) this.resumeAfterIdentityRestored(event, event.at);
+
     this.render();
+  }
+
+  /**
+   * Freeze the clock of the question on screen because the page stopped
+   * offering an identifiable question (识别：未识别).
+   *
+   * The engine is deliberately KEPT — only paused — which is what makes the
+   * behaviour safe:
+   *
+   *  - the time already spent on this question survives;
+   *  - when the same question is identified again the clock resumes from that
+   *    value instead of restarting at zero;
+   *  - the question can still be finished and still produces a record, so it
+   *    keeps its row in the end-of-exercise summary.
+   *
+   * Only a *running* clock is frozen, so a pause the learner asked for is left
+   * exactly as it is (and never auto-resumed later).
+   */
+  private pauseForMissingIdentity(now: number): void {
+    const engine = this.engine;
+    if (!engine || engine.getPhase() !== 'running') return;
+    // Automatic: the learner did not press 暂停, so `wasPaused` stays false.
+    engine.pause(now, true);
+    this.autoPausedForIdentity = true;
+    this.lastEventText = '未识别到题目，本题计时已暂停';
+    void this.checkpoint(now, true);
+  }
+
+  /**
+   * The page is identifiable again. Resume only when the identity is the very
+   * question whose clock was auto-paused; a different identity is a real
+   * question change and goes through the normal finalise/begin flow, and a
+   * learner-requested pause is never undone.
+   */
+  private resumeAfterIdentityRestored(event: DetectionEvent, now: number): void {
+    if (!this.autoPausedForIdentity) return;
+    const engine = this.engine;
+    if (!engine || engine.getPhase() !== 'paused') {
+      // The question was finished, replaced or dropped in the meantime.
+      this.autoPausedForIdentity = false;
+      return;
+    }
+    if (identityKeyOfEvent(event) !== engine.questionKey) return;
+    engine.resume(now);
+    this.autoPausedForIdentity = false;
+    this.lastEventText = '已重新识别到本题，继续计时';
+    void this.checkpoint(now, true);
   }
 
   private async beginQuestion(
@@ -321,6 +402,10 @@ export class ContentController {
     }
 
     this.engine = engine;
+    // A brand-new question starts with a clean identification state: whatever
+    // was paused before belongs to the question that just ended.
+    this.unidentified = false;
+    this.autoPausedForIdentity = false;
     this.seenQuestion = true;
     this.warning =
       snapshot.confidence === 'weak'
@@ -365,6 +450,7 @@ export class ContentController {
     }
     const final = engine.finish(now, reason);
     this.pendingRecord = this.buildRecord(engine, final, now, reason);
+    this.autoPausedForIdentity = false;
     this.lastEventText =
       reason === 'skipped' ? '已跳过，本题计时已停止' : '答对，本题计时已停止';
     void this.checkpoint(now, true);
@@ -379,6 +465,7 @@ export class ContentController {
     const held = this.pendingRecord;
     this.pendingRecord = null;
     this.skipInitiated = false;
+    this.autoPausedForIdentity = false;
 
     if (!engine) {
       if (held) await this.storeRecord(held);
@@ -432,6 +519,7 @@ export class ContentController {
     if (!engine) return;
     this.engine = null;
     this.skipInitiated = false;
+    this.autoPausedForIdentity = false;
     this.warning = null;
     this.currentExerciseKey = exerciseKeyFromUrl(location.href);
 
@@ -495,9 +583,11 @@ export class ContentController {
       engine.resume(now);
       this.lastEventText = '已继续计时';
     } else {
+      // A learner-requested pause is never auto-resumed later.
       engine.pause(now);
       this.lastEventText = '已暂停计时';
     }
+    this.autoPausedForIdentity = false;
     void this.checkpoint(now, true);
     this.render();
   }
@@ -515,10 +605,14 @@ export class ContentController {
     // so drop the held "completed" record for this question.
     this.pendingRecord = null;
     this.skipInitiated = false;
+    this.autoPausedForIdentity = false;
     this.warning = null;
     this.lastEventText = '已重置本题计时';
     // Re-evaluate so a reset never looks like a question change.
     this.detector?.reevaluate('manual-reset');
+    // Resetting restarts the clock; on a page that is still unrecognised that
+    // would immediately contradict 识别：未识别, so freeze it again.
+    if (this.unidentified && engine.getPhase() === 'running') this.pauseForMissingIdentity(now);
     void this.checkpoint(now, true);
     this.render();
   }
@@ -736,6 +830,15 @@ export class ContentController {
       questionKey: this.diagnostics.questionKey,
       engineQuestionKey: this.engine?.questionKey ?? null,
       lastEvent: this.lastEventText,
+      /**
+       * 识别：未识别, and whether this question's clock was frozen by the
+       * extension because of it. Both are readable from the page even while
+       * the panel itself is hidden, which is what makes the behaviour
+       * verifiable in a real browser (see README → 手动验证).
+       */
+      unidentified: this.unidentified,
+      autoPausedForIdentity: this.autoPausedForIdentity,
+      enginePhase: this.engine?.getPhase() ?? null,
       errors: this.diagnostics.errors,
       stopped: this.diagnostics.stopped,
       pollTicks: this.diagnostics.pollTicks,
@@ -817,10 +920,9 @@ export class ContentController {
    * keeps it off course pages, videos and any page whose structure is not
    * recognised, instead of showing a clock that measures nothing.
    *
-   * An engine that exists but whose detection has since become `uncertain`
-   * keeps the panel visible on purpose: the learner is mid-question and still
-   * needs the pause / reset controls. Hiding it there would make a transient
-   * page hiccup look like the extension had vanished.
+   * 识别：未识别 (no usable identity) also hides it, and additionally freezes
+   * the clock — see `pauseForMissingIdentity`. Showing a panel there would
+   * advertise a running clock for a question the extension cannot even name.
    *
    * What must never happen is showing the PREVIOUS exercise's clock: between an
    * SPA route change and the next detection the engine can still belong to the
@@ -830,6 +932,7 @@ export class ContentController {
   private shouldShowPanel(): boolean {
     if (!this.settings.overlayVisible) return false; // user's master switch
     if (this.inSummary) return false; // nothing is being timed here
+    if (this.unidentified) return false; // 识别：未识别 — no question to show
     const engine = this.engine;
     if (!engine) return false;
     return engine.exerciseKey === exerciseKeyFromUrl(location.href);
@@ -1055,6 +1158,9 @@ export class ContentController {
       diagnostics: this.diagnostics,
       warning: this.warning,
       lastEvent: this.lastEventText,
+      // 识别：未识别 with the question's clock frozen. The panel is hidden in
+      // this state, so this is how the learner finds out what happened.
+      pausedForUnidentified: this.autoPausedForIdentity,
       // Quiz / unit-test / course-challenge pages sit behind an intro card, so
       // "no question yet" there means "not started", not "unsupported".
       startCard: isStartCardPresent(document),
@@ -1106,4 +1212,35 @@ function isStatusRequest(message: unknown): boolean {
     message !== null &&
     (message as { type?: unknown }).type === 'khan-timer:get-status'
   );
+}
+
+/**
+ * Does this observation describe a question we can name?
+ *
+ * `confidence: 'none'` is exactly "no usable identity", whether that is because
+ * no question region was found or because the region exposed nothing to key on.
+ * It is the same condition the panel renders as 识别：未识别.
+ */
+function isIdentified(snapshot: QuestionSnapshot): boolean {
+  return snapshot.regionFound && snapshot.confidence !== 'none';
+}
+
+/**
+ * The identity an event observed, or null when it carries none.
+ *
+ * Taken from the event rather than the snapshot so it is the exact key the
+ * decider compared against — that is what makes "the paused question is back"
+ * an equality test rather than a guess.
+ */
+function identityKeyOfEvent(event: DetectionEvent): string | null {
+  switch (event.type) {
+    case 'question-changed':
+      return event.to;
+    case 'same-question':
+      return event.key;
+    case 'pending':
+      return event.candidate;
+    case 'uncertain':
+      return null;
+  }
 }

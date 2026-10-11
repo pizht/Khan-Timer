@@ -244,7 +244,7 @@ references/
 │   ├── overlay-countup.png                 # 面板在真实练习页上正计时
 │   ├── overlay-countdown-expired.png       # 倒计时归零的超时状态（面板变红）
 │   ├── overlay-collapsed.png               # 折叠为小胶囊
-│   ├── overlay-degraded-unrecognised.png   # 识别不确定时的保守降级与可见提示
+│   ├── overlay-degraded-unrecognised.png   # 识别不确定时的保守降级（历史：旧「保持计时」行为；现行为为隐藏面板 + 暂停计时）
 │   ├── summary-per-question-times.png      # 结束页的「本轮每题用时」卡片
 │   └── popup-settings.png                  # 扩展弹出面板
 ├── snapshots/
@@ -333,7 +333,8 @@ patterns = [ 64位十六进制哈希 → "<redacted-hash>",
 3. **降级路径**：无进度标记时，用 `题干文本 + 题型签名` 的哈希作为指纹，
    置信度降为 `fingerprint`，面板显示较低置信度。
 4. **保守降级**：找不到题目区域或无可用身份时，发出 `uncertain`，
-   **保持当前计时不变**，面板给出可见警告并保留手动重置/暂停。
+   **暂停**本题计时并**隐藏**面板（引擎只暂停、不丢弃：已累计用时与记录保留，
+   重新识别到同一道题后自动继续），提示落在扩展弹出面板，手动重置/暂停操作照旧。
 5. **去抖 + 抑制重复**：新身份需连续稳定 `debounceMs`（默认 400 ms）且距上次切换
    ≥ `cooldownMs`（默认 1200 ms）才提交；出现候选时主动安排一次延后复核。
 6. **显式重置信号**：URL 变化（`decider.reset`）与「Start over」点击（`decider.reseed`）

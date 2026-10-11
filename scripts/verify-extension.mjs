@@ -870,7 +870,8 @@ async function main() {
       console.log(
         '  NOTE: Khan Academy left the page in a transitional state ' +
           '(no answer form, progress markers still present, no summary). ' +
-          'The extension correctly reported 识别不确定 and kept timing.',
+          'The extension reports 识别：未识别, hides the panel and pauses this ' +
+          "question's clock instead of billing unreadable time to it.",
       );
       skipCheck(
         'the end-of-exercise summary screen is reached',

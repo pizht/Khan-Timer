@@ -158,7 +158,16 @@ export class TimerEngine {
     return true;
   }
 
-  pause(now: number): boolean {
+  /**
+   * Freeze the clock.
+   *
+   * @param automatic true when the extension froze the clock itself — the page
+   *   stopped offering an identifiable question — rather than the learner
+   *   pressing 暂停. An automatic pause deliberately does NOT set `sawPause`,
+   *   so a record's `wasPaused` keeps meaning "the learner paused this
+   *   question"; the frozen time is still reported through `pausedMs`.
+   */
+  pause(now: number, automatic = false): boolean {
     if (this.phase !== 'running') return false;
     // Resolve expiry before freezing so the crossing instant stays exact.
     this.updateExpiry(now);
@@ -166,7 +175,7 @@ export class TimerEngine {
     this.segmentStart = null;
     this.pauseStartedAt = now;
     this.phase = 'paused';
-    this.sawPause = true;
+    if (!automatic) this.sawPause = true;
     return true;
   }
 

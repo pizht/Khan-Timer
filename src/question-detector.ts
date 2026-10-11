@@ -439,9 +439,7 @@ export class QuestionDetector {
     this.attachRegion();
     // The SPA can swap the whole question container; watch the body coarsely
     // so we can re-resolve the region when ours is detached.
-    this.bodyObserver = new MutationObserver(() => {
-      if (!this.region || !this.region.isConnected) this.attachRegion();
-    });
+    this.bodyObserver = new MutationObserver(() => this.onBodyMutation());
     this.bodyObserver.observe(document.documentElement, { childList: true, subtree: true });
     this.pollTimer = window.setInterval(() => this.poll(), POLL_INTERVAL_MS);
     this.evaluate('start');
@@ -489,6 +487,23 @@ export class QuestionDetector {
   }
 
   /* ---------------- internals ---------------- */
+
+  /**
+   * Something in the document was added or removed. The question region is the
+   * thing we must keep hold of, so a detached (or absent) region is re-resolved.
+   *
+   * A re-attached region is then evaluated IMMEDIATELY, not left to the next
+   * poll. The progress marker does not move when the SAME question is
+   * re-rendered, so nothing else would ever re-run detection: the extension
+   * would stay in 识别：未识别 with its panel hidden even though the question is
+   * back on screen (found by `tests/controller.test.ts`).
+   */
+  private onBodyMutation(): void {
+    const previous = this.region;
+    if (previous && previous.isConnected) return; // nothing to re-resolve
+    this.attachRegion();
+    if (this.region !== previous) this.evaluate('region-reattached');
+  }
 
   private attachRegion(): void {
     const notes: string[] = [];

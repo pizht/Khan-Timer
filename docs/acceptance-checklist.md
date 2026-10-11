@@ -15,8 +15,8 @@
 
 ```bash
 pnpm install
-pnpm run verify          # 类型检查 + 单元测试(165) + 构建 + dist 产物检查(56)
-pnpm run verify:edge     # 真实 Edge 端到端验证(32)
+pnpm run verify          # 类型检查 + 单元测试(205) + 构建 + dist 产物检查(56)
+pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 ```
 
 ---
@@ -49,7 +49,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 |---|---|---|---|
 | 1 | 对已验证的每种页面类型，至少测试连续完成 10 次题目切换 | ❌ **未满足** | 实际完成 **3 次**连续切题（未加载扩展的交互采集，进度索引 0→1→2→3，见 `references/observations.md` 第 1 节）与 **1 次**（加载扩展的端到端）。用于验证的练习只有 4 题且每次切题须先答对，自动化上限受题量限制。**如实记录于 `docs/known-limitations.md` 第 1 条。** |
 | 2 | 输入答案、打开提示、显示答题反馈、展开辅助内容时，不应无条件重置题目计时 | ✅ | 4 条专门回归用例（`tests/question-detector.test.ts` → `REGRESSION — auxiliary content must not reset the timer`）：输入答案、答错浮层、**提示展开使区域文本 3.5 KB→23 KB**、无进度标记时的反馈浮层。端到端另有实测：**答对后停表**（`answering correctly stops the timer`）与**答错后继续计时**（答错时不停表，可重试）。真实观测依据见 `references/observations.md` 第 2、3、4 节。 |
-| 3 | 无法可靠识别时提供可见提示或可用的手动恢复方式 | ✅ | 检测器发出 `uncertain` 后：面板显示黄色警告（`无法可靠识别题目变化（question region not found）。计时保持不变，可用"重置本题"手动开始。`）、「识别」一栏显示 `未识别/弱信号`、页脚显示 `识别不确定`，并保留「重置本题」「暂停」按钮。截图 `references/screenshots/overlay-degraded-unrecognised.png`。单元测试 `degrades conservatively when no question region is found`、`keeps the current timer when the identity disappears mid-question`。 |
+| 3 | 无法可靠识别时提供可见提示或可用的手动恢复方式 | ✅ | 检测器发出 `uncertain` 后：**暂停**本题计时并**隐藏**面板（不再显示一个量不出东西的时钟），扩展弹出面板给出可见提示（`未识别到题目（question region not found）。本题计时已暂停，重新识别到本题后会自动继续。`）、「识别」一栏显示 `未识别/弱信号`；重新识别到**同一道题**后自动继续计时，且本题仍会出现在结束页的用时统计里。单元测试 `degrades conservatively when no question region is found`、`keeps the current timer when the identity disappears mid-question`、`hides the panel, freezes the clock and resumes the same question from the frozen value`、`keeps a question paused mid-way in the end-of-exercise summary`。详见下方「追加修正：识别：未识别时暂停计时并隐藏面板」。 |
 | 4 | 验收清单明确列出已验证支持和未验证的页面类型 | ✅ | `docs/compatibility.md`（验收视角）与 `references/page-inventory.md`（研究视角），按 `Edge-verified` / `Automated-tested` / `Observed` / `Unverified` 四级列明。 |
 
 ## 8.4 数据与隐私
@@ -82,11 +82,25 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 项目 | 内容 |
 |---|---|
 | **要求** | 面板显示与题目识别状态同步：未识别时不显示，识别到题目时显示 |
-| **实现** | `shouldShowPanel()`：仅当 `overlayVisible` 为真、不在结束页、**且 `engine !== null`**（即确实在给某道题计时）时显示。已开始计时但识别临时不确定时**保持显示**，避免面板一闪消失 |
+| **实现** | `shouldShowPanel()`：仅当 `overlayVisible` 为真、不在结束页、**且 `engine !== null`**（即确实在给某道题计时）时显示。识别临时不确定时**不显示**，并同时暂停本题计时（见下一条追加修正） |
 | **顺带修复** | 测验 / 单元测试 / 课程挑战页面的「介绍卡片」（`data-testid="start-task-card-summary"`）会让结束页判定**误报为 true**（外观同样是「有练习外壳、无答题表单、无进度标记」）。已按该 testid 排除，并新增 `isStartCardPresent()` 让弹出面板提示「尚未开始：请点击页面上的「Let's go」」 |
 | **可见提示的落点** | 识别失败时面板不显示，原因改由**扩展弹出面板**呈现（未找到题目区域、命中策略、错误列表），满足需求 8.3「提供可见提示**或**可用的手动恢复方式」 |
 | **单元测试** | `isSummaryPage` 新增「介绍卡片不算结束页」用例；新增 `isStartCardPresent` 3 条 |
 | **端到端** | 新增 6 项真实 Edge 检查：课程页无面板、测验介绍卡片上无面板、点 `Let's go` 后识别到题目（进度 5）、随后面板出现并显示 `进度 1 of 5 识别：题目ID` |
+
+### 追加修正：识别：未识别时暂停计时并隐藏面板（用户报告）
+
+| 项目 | 内容 |
+|---|---|
+| **要求** | 状态为「识别：未识别」时**不显示**计时小面板，并**暂停**当前题目的计时；直到识别到**被暂停的那道题**时才继续原先的计时；并且这道中途被暂停的题目，在做完整个 practice 后**仍然要被结束页的用时统计列表收录** |
+| **实现** | `ContentController` 新增两个状态位：`unidentified`（页面当前给不出可用标识）与 `autoPausedForIdentity`（本题的时钟是**扩展自己**因为识别丢失而暂停的）。`shouldShowPanel()` 增加 `!unidentified` 分支；`pauseForMissingIdentity()` 在识别丢失时调用 `engine.pause(now, /* automatic */ true)`——**只暂停、不丢弃**引擎；`resumeAfterIdentityRestored()` 只在事件携带的标识**等于 `engine.questionKey`** 时 `engine.resume()` |
+| **为什么是暂停而不是丢弃** | 丢弃/重置会让这道题**从结束页消失**。暂停保留了引擎、`accumulatedMs`、第一次提交时间戳与 `runId`；无法识别的那段时间只累加 `pausedMs`，因此本题既能继续计时，也照样生成记录 → 照样出现在结束页表格里 |
+| **只恢复自动暂停** | `autoPausedForIdentity` 只在自动暂停时置位，学生手动按「暂停」时清除。识别恢复后，学生自己的暂停**保持暂停**（`never undoes a pause the learner asked for`） |
+| **记录语义** | `TimerEngine.pause(now, automatic)`：`automatic` 为真时不再置 `sawPause`（协调器在识别丢失时传 `true`），所以记录的 `wasPaused` 仍然只表示「学生按过暂停」；无法识别的时间只体现在 `pausedMs`（结束页该行会多一行小字 `暂停 0:31`） |
+| **顺带修复的真实缺陷** | 题目区域被换掉再**原样**换回来时，进度标记没有变、新区域里也没有任何 mutation，检测器原本不会再评估一次，于是会永远停在「未识别」（面板一直不回来）。`QuestionDetector.onBodyMutation()` 现在在**重新绑定到区域的那一刻立即评估**，并新增回归用例 |
+| **可见提示的落点** | 面板隐藏，所以提示改由**扩展弹出面板**呈现：`未识别到题目：本题计时已暂停，重新识别到本题后自动继续`（`pausedForUnidentified` 字段） |
+| **单元测试** | `TimerEngine`：`an automatic pause freezes the clock without claiming the learner paused it`、`a learner pause still marks the question as paused`。检测器：`re-evaluates the moment the region comes back, with nothing else changing`。协调器（jsdom 端到端）：`hides the panel, freezes the clock and resumes the same question from the frozen value`、`never undoes a pause the learner asked for`、`keeps a question paused mid-way in the end-of-exercise summary`、`matches the manual verification recipe in the README (remove then restore the region)`（最后一条与 README 的手动验证步骤逐字对应） |
+| **端到端** | **未在真实 Edge 上驱动验证**：浏览器里无法可靠制造「题目区域消失、进度标记不动、随后同一道题原样回来」这一幕。证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑，仅 DOM 与 `chrome.storage` 为替身），见 `tests/controller.test.ts`。这一保留已记入 `docs/known-limitations.md` 第 23 条 |
 
 ### SAT test-prep 页面类型
 
@@ -151,7 +165,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 9 | 倒计时暂停、恢复、归零及提示音开关 | ✅ | 端到端超时 3 项；单元测试 `fires expiredJustNow exactly once so the tone cannot repeat`（提示音只响一次）、`resolves expiry correctly when the limit passes while paused`；提示音开关在弹出面板并有端到端写入验证 |
 | 10 | 页面刷新、标签页切换、浏览器休眠后恢复 | ⚠️ | 刷新由单元测试覆盖（会话恢复 + 配置持久化）；**在同一个标签页里切换练习**由 `tests/controller.test.ts` 覆盖（离开时冻结并保留会话、回来后接着计时、已答对的题立刻落盘）；休眠由「大跨度时钟跳跃」单元测试覆盖。**真实休眠未实测**（见已知限制第 7 条）。 |
 | 11 | 本地存储为空、已有记录或写入失败 | ✅ | `tests/storage.test.ts` 全覆盖：空存储、有记录、`failOnSet` / `failOnGet` / `failOnRemove`、无 `chrome` API、数据损坏清洗 |
-| 12 | 页面结构变化导致无法找到题目区域时的降级处理 | ✅ | 单元测试 `goes uncertain, and keeps timing, when the region disappears`；截图 `overlay-degraded-unrecognised.png` |
+| 12 | 页面结构变化导致无法找到题目区域时的降级处理 | ✅ | 单元测试 `goes uncertain, and keeps timing, when the region disappears`、`hides the panel, freezes the clock and resumes the same question from the frozen value`、`re-evaluates the moment the region comes back, with nothing else changing`；截图 `overlay-degraded-unrecognised.png`（**历史截图**：拍摄于「保持计时」的旧行为下，现行为是隐藏面板并暂停，见下方追加修正） |
 
 **12 个场景中 10 个完全覆盖，2 个（#3、#10）部分覆盖并已如实记录。**
 
@@ -166,9 +180,9 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
 | 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
 | 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 198 用例）；运行说明见 `README.md` → 测试与验证 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 205 用例）；运行说明见 `README.md` → 测试与验证 |
 | 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
-| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（22 条，含未满足的验收项与切换练习的边界条件） |
+| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（23 条，含未满足的验收项、切换练习的边界条件与「识别：未识别」的验证保留） |
 
 ---
 
@@ -181,7 +195,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | 倒计时结束只提醒，不自动提交或跳题 | ✅ `expired` 标记 + 一次提示音；无提交/导航代码路径；端到端已验证 |
 | 本地保存数据，不使用云同步或账号系统 | ✅ 仅 `chrome.storage.local`；`verify-dist.mjs` 断言无任何网络 API |
 | 仅对测试过的页面类型承诺支持 | ✅ `docs/compatibility.md` 分级；`references/page-inventory.md` 明确不承诺未验证页面 |
-| 识别不确定时保守降级，不冒险重置计时 | ✅ `uncertain` 事件 → 保持计时 + 可见警告 + 手动重置；单元测试与截图佐证 |
+| 识别不确定时保守降级，不冒险重置计时 | ✅ `uncertain` 事件 → **暂停**本题计时（不重置、不丢弃：引擎与累计用时都保留）+ 隐藏面板 + 弹出面板可见提示；重新识别到同一道题后自动继续，该题仍进入结束页统计。单元测试与截图佐证 |
 | 首版包含本地计时记录清除功能与测试清单 | ✅ 弹出面板「清除全部记录」（端到端验证）+ 本对照表与测试清单 |
 
 ---
@@ -192,7 +206,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 |---|---|
 | 标签页隐藏或电脑休眠：按真实经过时间计算，除非手动暂停 | ✅ 时间戳差分；`document.visibilityState === 'hidden'` 时写检查点但**不停表** |
 | 倒计时到零：显示超时提醒，不自动提交或切题 | ✅ 见 8.2 #5 |
-| 识别不确定：不自动重置；提示用户手动处理 | ✅ 见 8.3 #3 |
+| 识别不确定：不自动重置；提示用户手动处理 | ✅ 见 8.3 #3：不重置（只是暂停），提示落在弹出面板，重新识别到本题后自动继续 |
 | 本地存储：不上传，提供清除功能 | ✅ 见 8.4 #1、#3、#4 |
 | 兼容性声明：只对通过测试清单的页面类型做「已验证支持」声明 | ✅ 见 8.3 #4 |
 
@@ -205,7 +219,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(32)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 181 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 205 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

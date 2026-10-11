@@ -509,6 +509,35 @@ describe('QuestionDetector — DOM adapter', () => {
   });
 
   /*
+   * Recovery from 识别：未识别.
+   *
+   * When the SAME question is re-rendered, the progress marker that carries its
+   * identity does not move at all, and the fresh subtree contains no mutation
+   * the region observer could see (it is attached after the swap). Without an
+   * explicit evaluation on re-attach, detection would stay "uncertain" forever:
+   * the panel would stay hidden and a paused question would never resume.
+   */
+  it('re-evaluates the moment the region comes back, with nothing else changing', async () => {
+    start(khanDom({ progressIndex: 0 }));
+    expect(last()).toMatchObject({ type: 'question-changed' });
+
+    // The question area is swapped out; the exercise chrome stays.
+    document.querySelector('form[name="answerform"]')?.remove();
+    document.querySelector('.framework-perseus')?.remove();
+    document.querySelector('.perseus-renderer')?.remove();
+    await vi.advanceTimersByTimeAsync(800);
+    expect(last()).toMatchObject({ type: 'uncertain' });
+
+    // The very same question is rendered again.
+    const seen = events.length;
+    document.body.innerHTML = khanDom({ progressIndex: 0 });
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(events.slice(seen).some((e) => e.type === 'same-question')).toBe(true);
+    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
+  });
+
+  /*
    * Switching practice A -> practice B inside the SPA.
    *
    * B's "Ready to practice?" start card has no answer form, no progress marker

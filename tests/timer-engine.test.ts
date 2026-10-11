@@ -62,6 +62,34 @@ describe('TimerEngine — countup', () => {
     expect(engine.pause(T0 + 2_000)).toBe(false);
   });
 
+  it('an automatic pause freezes the clock without claiming the learner paused it', () => {
+    // 识别：未识别 freezes the clock itself. The question's time must be
+    // preserved and the frozen stretch must be reported as paused time, but
+    // `wasPaused` ("the learner pressed 暂停") has to stay false.
+    const engine = makeEngine();
+    expect(engine.pause(T0 + 2_000, true)).toBe(true);
+    expect(engine.getPhase()).toBe('paused');
+    expect(engine.hasSeenPause()).toBe(false);
+    expect(engine.elapsedMs(T0 + 42_000)).toBe(2_000);
+
+    // Re-identifying the same question resumes from the frozen value.
+    expect(engine.resume(T0 + 42_000)).toBe(true);
+    expect(engine.elapsedMs(T0 + 45_000)).toBe(5_000);
+    expect(engine.totalPausedMs(T0 + 45_000)).toBe(40_000);
+    expect(engine.hasSeenPause()).toBe(false);
+
+    const final = engine.finish(T0 + 45_000, 'question-change');
+    expect(final.elapsedMs).toBe(5_000);
+    expect(final.pausedMs).toBe(40_000);
+    expect(engine.hasSeenPause()).toBe(false);
+  });
+
+  it('a learner pause still marks the question as paused', () => {
+    const engine = makeEngine();
+    engine.pause(T0 + 2_000);
+    expect(engine.hasSeenPause()).toBe(true);
+  });
+
   it('clamps a backwards clock jump to zero instead of going negative', () => {
     const engine = makeEngine();
     expect(engine.elapsedMs(T0 - 10_000)).toBe(0);

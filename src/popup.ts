@@ -42,6 +42,12 @@ interface StatusResponse {
   };
   warning: string | null;
   lastEvent: string;
+  /**
+   * The question's clock was frozen because the page is 识别：未识别. The
+   * in-page panel is hidden in that state, so the popup is where the learner
+   * finds out that the clock is paused rather than stopped.
+   */
+  pausedForUnidentified?: boolean;
   /** The page is showing a "Let's go" intro card instead of a question. */
   startCard?: boolean;
 }
@@ -278,6 +284,11 @@ function paintStatus(response: StatusResponse): void {
 
   if (response.startCard) {
     statusText.textContent = '尚未开始：请点击页面上的「Let\u2019s go」';
+    statusText.className = 'status-value warn';
+  } else if (response.pausedForUnidentified) {
+    // The panel is hidden while 未识别, so say plainly that time is not being
+    // counted and that the question keeps its earlier time.
+    statusText.textContent = '未识别到题目：本题计时已暂停，重新识别到本题后自动继续';
     statusText.className = 'status-value warn';
   } else if (!diag.regionFound) {
     statusText.textContent = '未找到题目区域';
