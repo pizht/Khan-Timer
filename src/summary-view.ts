@@ -16,6 +16,12 @@
  *
  * The card is only ever rendered from records already stored locally; it makes
  * no network calls and stores nothing.
+ *
+ * Visual language (revised at the user's request): the card is page chrome, not
+ * a floating widget, so it has SQUARE corners, no drop shadow, sits directly on
+ * the divider that Khan Academy draws above its own results section (no margin
+ * below), and its collapse control is a plain grey chevron rather than a
+ * boxed triangle glyph.
  */
 
 import type { EndReason, QuestionRecord, SummaryRow } from './types.js';
@@ -52,7 +58,11 @@ const SHADOW_CSS = `
 * { box-sizing: border-box; }
 .card {
   display: block;
-  margin: 16px 0;
+  /* NO bottom margin: the card's bottom edge must sit exactly on the horizontal
+     divider Khan Academy draws above its own results section, so the two read
+     as one boundary. A bottom margin left a visible strip of white between the
+     injected card and the page's line. */
+  margin: 16px 0 0;
   padding: 14px 16px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
@@ -60,8 +70,10 @@ const SHADOW_CSS = `
   color: #0b214a;
   background: #ffffff;
   border: 1px solid rgba(11, 33, 74, 0.16);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(11, 33, 74, 0.08);
+  /* Square, unshadowed: a rounded, elevated card read as a foreign widget
+     dropped onto the summary screen. Border only, like the page's own boxes. */
+  border-radius: 0;
+  box-shadow: none;
   text-align: left;
 }
 .card.collapsed { padding-bottom: 12px; }
@@ -73,24 +85,29 @@ const SHADOW_CSS = `
   user-select: none;
 }
 .head:hover .title { text-decoration: underline; }
-.head:focus-visible { outline: 2px solid #1865f2; outline-offset: 3px; border-radius: 6px; }
+.head:focus-visible { outline: 2px solid #1865f2; outline-offset: 3px; }
 .toggle {
   flex: 0 0 auto;
   order: -1;
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0;
-  border: 1px solid rgba(11, 33, 74, 0.2);
-  border-radius: 6px;
-  background: #f7f9fc;
-  color: #0b214a;
+  /* A bare chevron, not a button: no border, no fill, no corner radius. The
+     element stays a real <button> for focus and keyboard activation. */
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: #5b6b85;
   font-family: inherit;
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
-.toggle:hover { background: #eef2f8; }
-.toggle:focus-visible { outline: 2px solid #1865f2; outline-offset: 1px; }
+.toggle svg { display: block; transition: transform 120ms ease; }
+.toggle:hover { color: #0b214a; }
+.toggle:focus-visible { outline: 2px solid #1865f2; outline-offset: 2px; }
+/* Collapsed: the same downward chevron, turned to point right. */
+.card.collapsed .toggle svg { transform: rotate(-90deg); }
 .title { flex: 1 1 auto; font-size: 15px; font-weight: 700; margin: 0; }
 .total { flex: 0 0 auto; font-size: 13px; color: #4a5b7a; font-variant-numeric: tabular-nums; }
 .card.collapsed .body { display: none; }
@@ -108,7 +125,7 @@ td.dur { font-weight: 700; font-size: 15px; }
 th.dur, td.dur { text-align: right; }
 .tag {
   display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.04em; border-radius: 4px; padding: 1px 5px; margin-left: 6px;
+  letter-spacing: 0.04em; border-radius: 0; padding: 1px 5px; margin-left: 6px;
   background: #eef2f8; color: #4a5b7a; vertical-align: middle;
 }
 .tag.expired { background: #fdecea; color: #c0392b; }
@@ -313,6 +330,20 @@ const escapeHtml = (input: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
+/**
+ * The collapse control's chevron, drawn rather than typed.
+ *
+ * A text glyph (`▾` / `▸`) renders with whatever weight and shape the viewer's
+ * font supplies, which is why the old boxed version looked nothing like the
+ * chevrons the page itself uses. A stroked SVG keeps the mark identical
+ * everywhere; the collapsed state rotates it in CSS (`.card.collapsed
+ * .toggle svg`).
+ */
+const CHEVRON_SVG =
+  '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">'
+  + '<path d="M3.6 6.2 L8 10.6 L12.4 6.2" fill="none" stroke="currentColor"'
+  + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+
 interface Refs {
   host: HTMLElement;
   card: HTMLDivElement;
@@ -354,7 +385,7 @@ export class SummaryView {
     card.className = 'card';
     card.innerHTML = `
       <div class="head" data-role="head">
-        <button class="toggle" data-role="toggle" type="button"></button>
+        <button class="toggle" data-role="toggle" type="button">${CHEVRON_SVG}</button>
         <h2 class="title">本轮每题用时</h2>
         <span class="total" data-role="total"></span>
       </div>
@@ -413,9 +444,10 @@ export class SummaryView {
   private applyCollapsed(): void {
     const refs = this.refs;
     if (!refs) return;
+    // The chevron's direction comes from `.card.collapsed .toggle svg` in CSS;
+    // only the accessible state is set here.
     refs.card.classList.toggle('collapsed', this.collapsed);
     refs.host.setAttribute(SUMMARY_COLLAPSED_ATTR, String(this.collapsed));
-    refs.toggle.textContent = this.collapsed ? '\u25B8' : '\u25BE';
     refs.toggle.setAttribute('aria-expanded', String(!this.collapsed));
     refs.toggle.setAttribute('aria-label', this.collapsed ? '展开用时明细' : '折叠用时明细');
     refs.toggle.title = this.collapsed ? '展开用时明细' : '折叠用时明细';

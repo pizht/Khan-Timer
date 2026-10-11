@@ -645,4 +645,54 @@ describe('SummaryView — collapse', () => {
     // The body is hidden via CSS; the card itself stays compact.
     expect(root()?.querySelector('.body')).not.toBeNull();
   });
+
+  it('draws the collapse control as a plain chevron, not a boxed triangle', () => {
+    mount({ collapsed: false });
+    const button = toggle();
+    // The mark is an inline SVG so its weight and colour do not depend on the
+    // viewer's font (the old version used the text glyphs ▾ / ▸).
+    expect(button?.querySelector('svg')).not.toBeNull();
+    expect((button?.textContent ?? '').trim()).toBe('');
+    // Still a real button: focusable, announced, and rotated by CSS alone.
+    expect(button?.getAttribute('type')).toBe('button');
+  });
+});
+
+/* ================================================================== *
+ * Page-integrated presentation
+ *
+ * The card is page chrome, not a floating widget: square corners, no drop
+ * shadow, flush with the divider the page draws below it, and a borderless
+ * grey chevron for the collapse control. jsdom does not lay out, so the
+ * stylesheet is asserted directly.
+ * ================================================================== */
+
+describe('SummaryView — page-integrated presentation', () => {
+  const css = (): string => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const view = new SummaryView();
+    view.mount(document.getElementById('host') as Element, 'before-host');
+    view.render({ collapsed: false, rows: [makeRow({ questionNumber: 1 })] });
+    return document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelector('style')
+      ?.textContent ?? '';
+  };
+
+  it('has square corners and no drop shadow', () => {
+    const sheet = css();
+    expect(sheet).toMatch(/\.card\s*\{[^}]*border-radius:\s*0\s*;/);
+    expect(sheet).toMatch(/\.card\s*\{[^}]*box-shadow:\s*none\s*;/);
+  });
+
+  it('leaves no gap between its bottom edge and the page divider below', () => {
+    expect(css()).toMatch(/\.card\s*\{[^}]*margin:\s*16px\s+0\s+0\s*;/);
+  });
+
+  it('styles the chevron button with no border, fill or corner radius', () => {
+    const sheet = css();
+    expect(sheet).toMatch(/\.toggle\s*\{[^}]*border:\s*0\s*;/);
+    expect(sheet).toMatch(/\.toggle\s*\{[^}]*border-radius:\s*0\s*;/);
+    expect(sheet).toMatch(/\.toggle\s*\{[^}]*background:\s*none\s*;/);
+    // Collapsed = the same chevron turned to point right.
+    expect(sheet).toMatch(/\.card\.collapsed\s+\.toggle\s+svg\s*\{[^}]*rotate\(-90deg\)/);
+  });
 });
