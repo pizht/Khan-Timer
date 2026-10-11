@@ -215,6 +215,12 @@
 自动继续`。**未跑真实站点**（浏览器里无法可靠制造这一幕），已在
 `docs/known-limitations.md` 第 23 条如实记录。
 
+页内警告 `无法可靠识别当前题目（<原因>）。…` **只在面板可见且页面确实读不出题目时**
+渲染；一旦同一道题重新被识别（面板回来、时钟继续），这条警告就随之清除，
+不会留在正在计时的面板上（用户报告「与现实不符」的缺陷，见
+`tests/controller.test.ts` → `does not keep the not-found warning after the same question is
+identified again`）。
+
 ### 重要限制：连续切题次数不足
 
 验收标准 8.3 要求「对已验证的每种页面类型，至少测试连续完成 **10 次** 题目切换」。

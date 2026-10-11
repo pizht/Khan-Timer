@@ -34,7 +34,11 @@ export interface OverlayState {
   questionKey: string | null;
   progress: string | null;
   confidence: DetectionConfidence;
-  /** Non-null when detection is degraded; shown as a visible warning. */
+  /**
+   * Non-null when detection is degraded; shown as a visible warning. Only ever
+   * rendered while the panel is visible, so a degraded state is never described
+   * to a learner who is looking at a working clock.
+   */
   warning: string | null;
   /** Short description of the last detection event, for transparency. */
   lastEvent: string;
@@ -372,6 +376,7 @@ export class OverlayView {
     const refs = this.refs;
     if (!refs) return;
 
+    const panelVisible = refs.host.style.display !== 'none';
     const isCountdown = state.mode === 'countdown';
     const displayMs = isCountdown && !state.expired ? (state.remainingMs ?? 0) : state.elapsedMs;
     const text = formatDuration(displayMs);
@@ -427,7 +432,11 @@ export class OverlayView {
     }
     refs.meta.innerHTML = bits.join('');
 
-    if (state.warning) {
+    // A warning only makes sense while the panel is on screen: in 识别：未识别 the
+    // panel is hidden, so rendering the text then would describe a state the
+    // learner cannot see, and it would still be sitting there once detection
+    // recovers.
+    if (state.warning && panelVisible) {
       refs.warning.hidden = false;
       refs.warning.textContent = state.warning;
     } else {

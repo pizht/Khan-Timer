@@ -224,6 +224,19 @@ function pauseLabel(): string {
   );
 }
 
+/**
+ * The warning line of the panel, as the learner sees it: the text when it is on
+ * screen, an empty string when the element is present but hidden.
+ */
+function panelWarning(): string {
+  const warning = overlayHost()?.shadowRoot?.querySelector('[data-role="warning"]') as
+    | HTMLElement
+    | null
+    | undefined;
+  if (!warning) return '';
+  return warning.hidden ? '' : (warning.textContent ?? '');
+}
+
 /** Click a control inside the panel's Shadow DOM, as a learner would. */
 function clickOverlay(role: string): void {
   const button = overlayHost()?.shadowRoot?.querySelector(`[data-role="${role}"]`);
@@ -604,6 +617,67 @@ describe('a question that cannot be identified', () => {
     expect(session['phase']).toBe('running');
     expect(session['accumulatedMs']).toBeGreaterThanOrEqual(3000);
     expect(session['pausedMs']).toBeGreaterThanOrEqual(500);
+  });
+
+  /**
+   * The reported bug: "为什么计时小面板会出现『无法可靠识别当前题目（question
+   * region not found）』？与现实不符".
+   *
+   * A gap of a few hundred milliseconds - the SPA replacing the question subtree
+   * while it re-renders - emitted `uncertain`, which froze the clock and wrote
+   * the warning. Identity came back an instant later and the clock resumed, but
+   * the warning was never cleared, so it stayed on screen next to a running
+   * clock and a perfectly readable question until the next question change.
+   */
+  it('does not keep the not-found warning after the same question is identified again', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5200);
+
+    expect(panelVisible()).toBe(true);
+    expect(panelWarning()).toBe('');
+
+    // A gap of one poll interval: the question area is gone, then back, with
+    // the SAME identity (progress index 1 of 4).
+    setPage(interimDom({ index: 0, total: 4 }));
+    await advance(400);
+    expect(panelVisible()).toBe(false);
+
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    await advance(1500);
+
+    // Panel back, clock running again, same question ...
+    expect(panelVisible()).toBe(true);
+    expect(diagnostics()).toMatchObject({
+      unidentified: false,
+      autoPausedForIdentity: false,
+      enginePhase: 'running',
+    });
+    // ... so the warning that described the gap must be gone with it.
+    expect(panelWarning()).toBe('');
+    expect(savedSession(data, EXERCISE_A)['phase']).toBe('running');
+  });
+
+  it('keeps the warning only while the page really cannot describe a question', async () => {
+    installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+
+    setPage(interimDom({ index: 0, total: 4 }));
+    await advance(1000);
+
+    // Hidden panel: the warning is not rendered at all (it would describe a
+    // state the learner cannot see, and would outlive it).
+    expect(panelVisible()).toBe(false);
+    expect(panelWarning()).toBe('');
   });
 });
 

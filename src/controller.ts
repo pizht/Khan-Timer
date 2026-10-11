@@ -320,7 +320,16 @@ export class ContentController {
     // The question that was auto-paused is identifiable again: carry on from
     // the exact value it was frozen at. A different question — or a pause the
     // learner asked for — is left alone.
-    if (!this.unidentified) this.resumeAfterIdentityRestored(event, event.at);
+    if (!this.unidentified) {
+      this.resumeAfterIdentityRestored(event, event.at);
+      // ... and the warning that described the degraded stretch goes with it.
+      // A page that identifies its question again must never keep showing
+      // "无法可靠识别当前题目": the panel is on screen and the clock is running,
+      // so the text contradicts what the learner sees. A momentary gap — the SPA
+      // replacing the question subtree for a few hundred milliseconds — used to
+      // leave exactly that contradiction behind until the next question.
+      this.clearIdentityWarning();
+    }
 
     this.render();
   }
@@ -370,6 +379,18 @@ export class ContentController {
     this.autoPausedForIdentity = false;
     this.lastEventText = '已重新识别到本题，继续计时';
     void this.checkpoint(now, true);
+  }
+
+  /**
+   * Drop the "无法可靠识别当前题目" warning.
+   *
+   * It describes one stretch of page the extension could not read, so it is only
+   * true while that stretch lasts. Re-identifying the question ends it — whether
+   * or not the clock had been auto-paused (a learner-requested 暂停 is also
+   * resumed-by-identity-free, and must lose the stale text just the same).
+   */
+  private clearIdentityWarning(): void {
+    this.warning = null;
   }
 
   private async beginQuestion(

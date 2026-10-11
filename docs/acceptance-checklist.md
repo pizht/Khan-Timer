@@ -102,6 +102,17 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | **单元测试** | `TimerEngine`：`an automatic pause freezes the clock without claiming the learner paused it`、`a learner pause still marks the question as paused`。检测器：`re-evaluates the moment the region comes back, with nothing else changing`。协调器（jsdom 端到端）：`hides the panel, freezes the clock and resumes the same question from the frozen value`、`never undoes a pause the learner asked for`、`keeps a question paused mid-way in the end-of-exercise summary`、`matches the manual verification recipe in the README (remove then restore the region)`（最后一条与 README 的手动验证步骤逐字对应） |
 | **端到端** | **未在真实 Edge 上驱动验证**：浏览器里无法可靠制造「题目区域消失、进度标记不动、随后同一道题原样回来」这一幕。证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑，仅 DOM 与 `chrome.storage` 为替身），见 `tests/controller.test.ts`。这一保留已记入 `docs/known-limitations.md` 第 23 条 |
 
+### 追加修正：正在计时的面板上残留「无法可靠识别当前题目」（用户报告）
+
+| 项目 | 内容 |
+|---|---|
+| **现象** | 面板显示 `07`、`正计时`、「暂停」按钮（说明时钟在走），却同时挂着警告 `无法可靠识别当前题目（question region not found）。本题计时已暂停，重新识别到本题后会自动继续。`——画面上的题目清晰可读，提示与现实不符（用户截图报告） |
+| **根因** | 两个独立的原因叠加：① `uncertain` 只负责**写入**警告，**没有任何路径在识别恢复时清除它**——清除仅发生在 `beginQuestion()` / 重置本题 / 进入结束页 / 切换练习；② 一个几百毫秒的瞬时中断（SPA 重新渲染题目子树；`buildSnapshot()` 只看缓存区域是否 `isConnected`）就足以发出 `uncertain` 并冻结时钟，恢复后时钟继续、面板回来，警告却留在原地 |
+| **修复** | `onDetectionEvent()` 在 `!this.unidentified` 分支里调用 `clearIdentityWarning()`（与 `resumeAfterIdentityRestored()` 并列，因此**学生手动暂停**的情况同样清除过期警告）；`OverlayView.render()` 只在**面板可见**时渲染 `state.warning`（`识别：未识别` 时面板本就隐藏，警告不必也不该渲染） |
+| **保持不变** | 「未识别 → 暂停计时 → 隐藏面板 → 重新识别同一道题后从暂停值继续」的整体行为**完全未改**；自动暂停、`pausedMs` 记账、记录与结束页行的语义都没有变化 |
+| **单元测试** | `tests/controller.test.ts` → `does not keep the not-found warning after the same question is identified again`（400 ms 中断 → 面板恢复 → 断言警告为空、`enginePhase: 'running'`）、`keeps the warning only while the page really cannot describe a question`（未识别期间面板隐藏 ⇒ 警告不渲染） |
+| **端到端** | 与第 23b 条同样的保留：这一幕未在真实 Edge 上驱动验证；证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑） |
+
 ### SAT test-prep 页面类型
 
 实测 `/test-prep/v2-sat-math/...` 的四类页面（练习、测验、单元测试、课程挑战），

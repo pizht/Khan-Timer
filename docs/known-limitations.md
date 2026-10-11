@@ -187,6 +187,17 @@
 - **副产物：** 暂停的这段时间累加进这道题的 `pausedMs`，所以结束页那一行会多出一行
   小字 `暂停 0:31`。记录的 `wasPaused` 仍只表示「**学生**按过暂停」，自动暂停不会
   把它置为 true。
+- **页内警告的生命周期（已修复的用户报告）：** 页面上那条
+  `无法可靠识别当前题目（question region not found）。本题计时已暂停…` 只在
+  **面板可见且页面确实读不出题目**时渲染，并在**同一道题重新被识别**时立即清除
+  （`ContentController.clearIdentityWarning()` + `OverlayView.render()` 的
+  `state.warning && panelVisible` 判断）。
+  修复前它一旦写入就只在下一次 `beginQuestion` / 重置本题 / 结束页 / 切换练习时消失，
+  于是 SPA 为几百毫秒替换题目子树所造成的一次瞬时 `uncertain`（时钟随即自动恢复）
+  会在**正在计时的面板上**留下这条过期警告——用户报告为「与现实不符」。
+  回归用例：`tests/controller.test.ts` →
+  `does not keep the not-found warning after the same question is identified again`、
+  `keeps the warning only while the page really cannot describe a question`。
 - **影响：** 低。若希望页面上也有提示，可以另行确认（例如显示一个极简的静态小图标）。
 
 ## 20. 面板只在计时中出现，题目出现前不可见
