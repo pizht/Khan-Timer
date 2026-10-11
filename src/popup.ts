@@ -90,6 +90,11 @@ function paintSettings(current: Settings): void {
   (el<HTMLInputElement>('overlayVisible')).checked = current.overlayVisible;
   (el<HTMLInputElement>('overlayCollapsed')).checked = current.overlayCollapsed;
   (el<HTMLInputElement>('resumeAcrossReload')).checked = current.resumeAcrossReload;
+
+  // Countup mode never counts down, so the per-question limit is meaningless
+  // there: hide it rather than show a control that does nothing. The value is
+  // kept in storage and repainted, so switching back to countdown restores it.
+  el('countdown-limit-field').hidden = current.defaultMode !== 'countdown';
 }
 
 function wireSettingsInputs(): void {

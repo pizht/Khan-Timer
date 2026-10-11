@@ -119,6 +119,8 @@ body {
 
 .field { display: block; margin-bottom: 9px; }
 .field:last-of-type { margin-bottom: 0; }
+/* `.field` sets its own display, which would beat the UA `[hidden]` rule. */
+.field[hidden] { display: none; }
 .field-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .field-inline {
   display: flex;

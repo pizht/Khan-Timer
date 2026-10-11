@@ -296,7 +296,7 @@ pnpm run build:watch     # 监听源码变化自动重建
 pnpm run typecheck       # tsc --noEmit，严格模式
 pnpm run test            # vitest run
 pnpm run test:watch      # vitest 监听
-pnpm run icons           # 重新生成图标 PNG
+pnpm run icons           # 从 assets/logo.png 重新生成图标 PNG
 pnpm run verify          # typecheck + test + build + dist 检查
 pnpm run verify:edge     # 真实 Edge 端到端验证（67 项）
 pnpm run verify:all      # 上面两个一起跑
@@ -306,6 +306,17 @@ pnpm run verify:all      # 上面两个一起跑
 
 构建**刻意不做压缩**，并同时输出 source map。这样需求 8.4「代码审查确认没有计时数据
 上传」可以直接对着 `dist/*.js` 人工审查。
+
+### Logo 与图标
+
+项目 logo 的原图是 [`assets/logo.png`](assets/logo.png)（满幅蓝底方形，1254×1254，
+图案为学士帽 + 秒表 + 树叶 + 黄色提速射线）。`pnpm run icons` 会用 Lanczos-3 把它
+重采样为 16/32/48/128 px，输出到 `public/icons/`，构建时再复制进 `dist/`——**没有引入
+任何图像处理依赖**，脚本只用 Node 内置的 `zlib` 解压/压缩 PNG。
+
+图标按原图外形生成**满幅直角方形、完全不透明**。脚本开头会先校验原图仍是「方形、蓝底
+铺满四边、四角也是蓝色」，所以如果 logo 被换成带白底或圆角的旧式素材，`pnpm run icons`
+会直接报错而不是悄悄产出一张裁错的图。
 
 ---
 
@@ -407,10 +418,12 @@ khan-academy-timer/
 │   ├── content.ts             # 内容脚本入口与模块协调
 │   ├── popup.ts               # 扩展弹出面板逻辑
 │   └── util.ts                # 指纹哈希、字符串与数值工具
+├── assets/
+│   └── logo.png               # ★ 项目 logo 原图（满幅蓝底方形，1254×1254）
 ├── public/
 │   ├── manifest.json
 │   ├── popup.html / popup.css
-│   └── icons/                 # 由 scripts/make-icons.mjs 生成
+│   └── icons/                 # 由 scripts/make-icons.mjs 从 assets/logo.png 生成
 ├── tests/                     # vitest 单元测试（4 个文件，181 个用例）
 ├── scripts/
 │   ├── build.mjs              # esbuild 打包到 dist/
