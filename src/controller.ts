@@ -21,12 +21,15 @@ import {
   type ProgressStateChange,
 } from './question-detector.js';
 import { OverlayView, type OverlayState } from './overlay.js';
-import { SummaryView } from './summary-view.js';
+import { SummaryView, buildSummaryRows } from './summary-view.js';
 import { TimerEngine, formatDuration } from './timer-engine.js';
 import { disposeAudio, playExpiryTone } from './sound.js';
 import {
-  addRecord,
   chromeStorageArea,
+  createRecordQueue,
+  ensureAttemptWindow,
+  loadAttemptWindow,
+  markAttemptSummarized,
   clearRun,
   clearSession,
   loadRecords,
@@ -35,11 +38,12 @@ import {
   loadSettings,
   parkedSession,
   pruneSessions,
-  recordsForRun,
+  attemptRecordsFor,
   sanitizeSettings,
   saveRun,
   saveSession,
   saveSettings,
+  type RecordQueue,
   type StorageArea,
 } from './storage.js';
 import {
@@ -127,6 +131,8 @@ export class ContentController {
   private disposed = false;
   private tickCount = 0;
 
+  /** Serialised writer for the saved timing records. */
+  private recordQueue: RecordQueue = createRecordQueue(null);
   /** The run (one pass through the exercise) that records are tagged with. */
   private run: ActiveRun | null = null;
   /**
@@ -151,7 +157,18 @@ export class ContentController {
   private skipInitiated = false;
   /** True once a question has actually been timed on this page. */
   private seenQuestion = false;
-  /** Position of the question being timed, for the summary rows. */
+  /**
+   * Which question of the exercise is being timed, bound when the question
+   * STARTS.
+   *
+   * Deliberately not re-read from the page while the question is on screen: when
+   * the learner advances, the progress marker already shows the NEXT question by
+   * the time the change is processed, so reading it late would stamp the new
+   * question's number onto the record of the previous one - which is how a
+   * summary ends up printing one question's time under another question's
+   * number. `learnQuestionPosition()` only fills in a value that was not
+   * readable yet, and only while the same question is still on screen.
+   */
   private currentQuestionIndex: number | null = null;
   private currentQuestionTotal: number | null = null;
   /**
@@ -172,6 +189,7 @@ export class ContentController {
 
   async init(): Promise<void> {
     this.area = chromeStorageArea();
+    this.recordQueue = createRecordQueue(this.area);
     this.settings = await loadSettings(this.area);
 
     const now = Date.now();
@@ -223,17 +241,6 @@ export class ContentController {
     const engine = this.engine;
     const leavingExercise = engine !== null && engine.exerciseKey !== exerciseKey;
 
-    // The progress position describes a question on THIS page. Reading it while
-    // the learner has already moved to another exercise would stamp the wrong
-    // index onto the record being parked.
-    if (!leavingExercise) {
-      const progress = readProgress(document);
-      if (progress) {
-        this.currentQuestionIndex = progress.index;
-        this.currentQuestionTotal = progress.total;
-      }
-    }
-
     // The page stopped being the exercise being timed. Whether or not the
     // detector can identify anything on the new page, the old question is
     // parked: its timing is never folded into the new exercise's run, and its
@@ -246,6 +253,11 @@ export class ContentController {
     // keeps the question's time, its record and its summary row alive.
     this.unidentified = !isIdentified(snapshot);
     if (this.unidentified) this.pauseForMissingIdentity(event.at);
+
+    // A question whose number was not readable when it started (the progress
+    // marker can appear after the question region) is only filled in while the
+    // SAME question is on screen, never while it is being finalised.
+    if (!leavingExercise && event.type !== 'question-changed') this.learnQuestionPosition();
 
     switch (event.type) {
       case 'question-changed': {
@@ -270,6 +282,20 @@ export class ContentController {
         void this.finalizeCurrentQuestion(now, 'question-change').then(() =>
           this.beginQuestion(event.to, snapshot, now, event.from === null),
         );
+        break;
+      }
+      case 'identity-upgraded': {
+        // The same question, now identified by its progress position instead of
+        // by a fingerprint. The clock is NOT touched: this is the case that used
+        // to restart every question at zero a moment after the page loaded.
+        const current = this.engine;
+        if (current && current.questionKey === event.from) {
+          current.questionKey = event.to;
+          current.stemFingerprint = snapshot.stemFingerprint ?? current.stemFingerprint;
+          this.currentConfidence = snapshot.confidence;
+          this.lastEventText = '题目已按进度重新识别，计时继续';
+          void this.checkpoint(event.at, true);
+        }
         break;
       }
       case 'same-question':
@@ -357,6 +383,17 @@ export class ContentController {
     this.currentExerciseKey = exerciseKey;
     this.currentConfidence = snapshot.confidence;
 
+    // Which question of this exercise is being timed is bound HERE, while it is
+    // the question on screen. Every record built for it - including one written
+    // later, when the page has already moved on - keeps this number.
+    const position = readProgress(document);
+    this.currentQuestionIndex = position?.index ?? null;
+    this.currentQuestionTotal = position?.total ?? null;
+    // Open this attempt's window (or keep it): the card is later built from
+    // "everything on this practice since the window opened", which survives the
+    // attempt id being lost in the middle.
+    await ensureAttemptWindow(this.area, exerciseKey, now);
+
     // One run per pass through the exercise. Reused across page reloads so the
     // summary still covers the whole attempt; replaced once its summary has
     // been shown, or when it is too old to belong to this attempt.
@@ -369,7 +406,7 @@ export class ContentController {
         exerciseKey,
         startedAt: now,
         summarizedAt: null,
-        lastQuestionIndex: readProgress(document)?.index ?? null,
+        lastQuestionIndex: position?.index ?? null,
       };
       void saveRun(this.area, run);
     }
@@ -381,9 +418,22 @@ export class ContentController {
     if (allowRestore && this.settings.resumeAcrossReload) {
       const session = await loadSession(this.area, exerciseKey, now);
       if (token !== this.flowToken) return; // superseded by a newer event
-      if (session && session.questionKey === questionKey) {
+      // Match on the identity OR on the stem hash: on a real page load the
+      // question is first seen before the progress marker exists, so a resume
+      // can be offered while the page still identifies it by fingerprint.
+      if (
+        session &&
+        (session.questionKey === questionKey ||
+          (session.stemFingerprint !== null &&
+            snapshot.stemFingerprint !== null &&
+            session.stemFingerprint === snapshot.stemFingerprint))
+      ) {
         engine = TimerEngine.restore(session, now);
         restored = true;
+        // Carry the identity the page reports NOW, so the session and the
+        // record use the same (stronger) key from here on.
+        engine.questionKey = questionKey;
+        engine.stemFingerprint = snapshot.stemFingerprint ?? engine.stemFingerprint;
       }
     }
     if (token !== this.flowToken) return;
@@ -396,6 +446,7 @@ export class ContentController {
             ? secondsToMs(this.settings.countdownLimitSeconds)
             : null,
         questionKey,
+        stemFingerprint: snapshot.stemFingerprint,
         exerciseKey,
         now,
       });
@@ -415,6 +466,23 @@ export class ContentController {
     this.lastCheckpointAt = now;
     void saveSession(this.area, engine.serialize(now));
     this.render();
+  }
+
+  /**
+   * Fill in the current question's number if the progress marker was not there
+   * yet when the question started.
+   *
+   * Only ever fills a missing value, and only called while the same question is
+   * still the one on screen: overwriting a bound number with whatever the page
+   * shows at an arbitrary moment would label one question's record with another
+   * question's number.
+   */
+  private learnQuestionPosition(): void {
+    if (this.currentQuestionIndex !== null) return;
+    const progress = readProgress(document);
+    if (!progress) return;
+    this.currentQuestionIndex = progress.index;
+    this.currentQuestionTotal = progress.total;
   }
 
   /**
@@ -440,7 +508,7 @@ export class ContentController {
       held.questionIndex !== this.currentQuestionIndex
     ) {
       this.pendingRecord = null;
-      void this.storeRecord(held);
+      void this.queueRecord(held);
     }
     if (this.pendingRecord !== null) return;
 
@@ -468,7 +536,7 @@ export class ContentController {
     this.autoPausedForIdentity = false;
 
     if (!engine) {
-      if (held) await this.storeRecord(held);
+      if (held) await this.queueRecord(held);
       return;
     }
 
@@ -488,12 +556,24 @@ export class ContentController {
       return;
     }
 
-    await this.storeRecord(record);
+    await this.queueRecord(record);
   }
 
-  private async storeRecord(record: QuestionRecord): Promise<void> {
-    const saved = await addRecord(this.area, record);
+  /**
+   * Append a record through the single serialised writer (see
+   * `createRecordQueue`): the writes fired without being awaited - parking a
+   * question when the learner switches practice, the self-heal branch that
+   * flushes a stale held record - can therefore never interleave with another
+   * one and drop a row of the end-of-exercise card.
+   */
+  private async queueRecord(record: QuestionRecord): Promise<void> {
+    const saved = await this.recordQueue.add(record);
     if (saved) this.recordsCount = saved.length;
+  }
+
+  /** Resolve once every queued record write has landed. */
+  private async flushRecordWrites(): Promise<void> {
+    await this.recordQueue.flush();
   }
 
   /**
@@ -529,7 +609,7 @@ export class ContentController {
     if (held) {
       // The question is finished: its timing is final, so it becomes a record.
       void clearSession(this.area, engine.exerciseKey);
-      void this.storeRecord(held);
+      void this.queueRecord(held);
       this.lastEventText = '已切到别的练习，上一题用时已保存';
     } else {
       // Still being timed: freeze the clock and keep the session resumable.
@@ -667,9 +747,18 @@ export class ContentController {
       // exercise chrome exists before the question does, so "no answer form"
       // briefly looks like the summary. Only a page that has actually been
       // timing a question can be finished.
-      // Entering also requires a run that has really been timing questions
-      // here, so a page that merely looks like a summary is ignored.
       if (!this.seenQuestion || this.run === null) return;
+      // ... and only the summary of THE PRACTICE THIS ATTEMPT BELONGS TO.
+      //
+      // Measured on khanacademy.org: moving to another practice inside the app
+      // tears the old exercise down first, and that torn-down frame has no
+      // answer form, no progress markers and still has the exercise chrome - it
+      // is byte-for-byte the summary's structural signature, only the URL has
+      // already changed. Entering the summary there marked the attempt finished,
+      // and the learner's earlier questions then fell out of the card when they
+      // came back (their timing was still stored, but under an attempt that was
+      // no longer the current one).
+      if (this.run.exerciseKey !== exerciseKeyFromUrl(location.href)) return;
       void this.enterSummary(now);
       return;
     }
@@ -719,33 +808,33 @@ export class ContentController {
       this.run = { ...this.run, summarizedAt: now };
       void saveRun(this.area, this.run);
     }
+    // The attempt boundary for this practice, independent of the run id: the
+    // card lists what the learner did since the previous summary was shown, so a
+    // run id lost mid-attempt no longer hides the earlier questions.
+    void markAttemptSummarized(this.area, exerciseKey, now);
     // Stop question tracking: there is no question on this screen.
     this.detector?.stop();
     this.warning = null;
     this.lastEventText = '本轮已完成，已显示每题用时';
 
+    // Every row below is read from storage: make sure the record of the last
+    // question (and any write still in flight, e.g. from parking another
+    // practice) has landed first, or a row would be missing.
+    await this.flushRecordWrites();
     const records = await loadRecords(this.area);
-    const runRecords = recordsForRun(records, runId);
-    // Rows follow capture order, which keeps them unambiguous even though the
-    // page's own index restarts for a bonus question.
-    let highestIndex = -1;
-    const rows: SummaryRow[] = runRecords.map((record, position) => {
-      const index = record.questionIndex;
-      const bonus = index !== null && index <= highestIndex;
-      if (index !== null) highestIndex = Math.max(highestIndex, index);
-      return {
-        questionNumber: position + 1,
-        bonus,
-        durationMs: record.durationMs,
-        pausedMs: record.pausedMs,
-        mode: record.mode,
-        limitMs: record.limitMs,
-        timedOut: record.timedOut,
-        skipped: record.status === 'skipped' || record.endReason === 'skipped',
-        firstSubmissionOutcome: record.firstSubmissionOutcome,
-        endReason: record.endReason,
-      };
-    });
+    // Retrieved by PRACTICE (the route the questions were timed on), then by the
+    // attempt window (everything since this practice's last summary), and only
+    // then by run id: a card can never show another exercise's rows, and the
+    // questions timed before a detour through another practice are found again
+    // even when the attempt id changed in the meantime.
+    const window = await loadAttemptWindow(this.area, exerciseKey);
+    const attempt = attemptRecordsFor(records, exerciseKey, runId, window?.since ?? null);
+    // The card is a table of the exercise's questions, in question order, with a
+    // 「数据缺失」 row for a number this attempt never timed.
+    const questionTotal =
+      attempt.reduce((max, record) => Math.max(max, record.questionTotal ?? 0), 0) ||
+      this.currentQuestionTotal;
+    const rows: SummaryRow[] = buildSummaryRows({ records: attempt, questionTotal });
 
     const host = this.findSummaryHost();
     if (!host) {
@@ -1235,6 +1324,8 @@ function isIdentified(snapshot: QuestionSnapshot): boolean {
 function identityKeyOfEvent(event: DetectionEvent): string | null {
   switch (event.type) {
     case 'question-changed':
+      return event.to;
+    case 'identity-upgraded':
       return event.to;
     case 'same-question':
       return event.key;

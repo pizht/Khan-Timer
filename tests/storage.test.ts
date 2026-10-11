@@ -13,9 +13,15 @@ import {
   MAX_RECORDS,
   SESSION_TTL_MS,
   addRecord,
+  attemptKey,
+  attemptRecordsFor,
+  ensureAttemptWindow,
+  loadAttemptWindow,
+  markAttemptSummarized,
   chromeStorageArea,
   clearRecords,
   clearSession,
+  createRecordQueue,
   loadRecords,
   loadSession,
   loadSettings,
@@ -89,6 +95,7 @@ function makeSession(overrides: Partial<TimerSerialized> = {}): TimerSerialized 
     mode: 'countup',
     phase: 'running',
     questionKey: 'id:progress:1 of 4',
+    stemFingerprint: null,
     exerciseKey: '/math/x/e/addition_4',
     startedAt: 1_700_000_000_000,
     accumulatedMs: 12_000,
@@ -279,6 +286,160 @@ describe('records', () => {
   it('treats a missing records key as empty', () => {
     expect(sanitizeRecords(undefined)).toEqual([]);
     expect(sanitizeRecords({ version: 1 })).toEqual([]);
+  });
+});
+
+/**
+ * `addRecord` is a read-modify-write and `chrome.storage` has no transaction:
+ * two overlapping calls both read the old list and the second `set` then drops
+ * the first record. That is how a question can vanish from the end-of-exercise
+ * card, so every writer goes through `createRecordQueue`.
+ */
+describe('record write queue (no torn read-modify-write)', () => {
+  /**
+   * Storage whose round-trip takes a turn of the event loop, the way the real
+   * message-passing `chrome.storage.local` does. Without that delay the hazard
+   * is invisible: an in-memory fake resolves both calls before either `set`
+   * runs.
+   */
+  class SlowArea extends FakeArea {
+    override async get(keys: string | string[] | null): Promise<Record<string, unknown>> {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return super.get(keys);
+    }
+
+    override async set(items: Record<string, unknown>): Promise<void> {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return super.set(items);
+    }
+  }
+
+  it('keeps every record when writes are requested back to back', async () => {
+    const area = new SlowArea();
+    const queue = createRecordQueue(area);
+
+    const ids = ['rec_a', 'rec_b', 'rec_c'];
+    await Promise.all(ids.map((id) => queue.add(makeRecord({ id }))));
+    await queue.flush();
+
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual(ids);
+  });
+
+  it('lets a reader wait for the writes already requested', async () => {
+    const area = new SlowArea();
+    const queue = createRecordQueue(area);
+
+    // Fired without being awaited, exactly like the held record flushed when the
+    // learner leaves a practice: the card must still see it.
+    void queue.add(makeRecord({ id: 'rec_flushed' }));
+    await queue.flush();
+
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual(['rec_flushed']);
+  });
+
+  it('keeps working after a write fails', async () => {
+    const area = new SlowArea();
+    const queue = createRecordQueue(area);
+    area.failOnSet = true;
+
+    await expect(queue.add(makeRecord({ id: 'rec_failed' }))).resolves.toBeNull();
+    area.failOnSet = false;
+    await queue.add(makeRecord({ id: 'rec_after_failure' }));
+    await queue.flush();
+
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual(['rec_after_failure']);
+  });
+});
+
+/**
+ * The card is built from the attempt of ONE practice, found through the route
+ * the questions were timed on.
+ */
+describe('attemptRecordsFor (route first, then attempt)', () => {
+  const A = '/math/x/e/addition_4';
+  const B = '/math/x/e/subtraction_4';
+
+  it('keeps another practice out even when the run id matches', () => {
+    const records = [
+      makeRecord({ id: 'a1', exerciseKey: A, runId: 'run_1', questionIndex: 0 }),
+      makeRecord({ id: 'b1', exerciseKey: B, runId: 'run_1', questionIndex: 0 }),
+    ];
+    const selected = attemptRecordsFor(records, A, 'run_1');
+    expect(selected.map((record) => record.id)).toEqual(['a1']);
+  });
+
+  it('returns the questions timed before and after a switch, in capture order', () => {
+    const records = [
+      makeRecord({ id: 'a1', exerciseKey: A, runId: 'run_1', questionIndex: 0 }),
+      makeRecord({ id: 'b1', exerciseKey: B, runId: 'run_2', questionIndex: 0 }),
+      makeRecord({ id: 'a2', exerciseKey: A, runId: 'run_1', questionIndex: 1 }),
+      makeRecord({ id: 'a3', exerciseKey: A, runId: 'run_1', questionIndex: 2 }),
+    ];
+    expect(attemptRecordsFor(records, A, 'run_1').map((record) => record.id)).toEqual([
+      'a1',
+      'a2',
+      'a3',
+    ]);
+  });
+
+  it('falls back to the newest attempt of that practice when the run identity was lost', () => {
+    const records = [
+      makeRecord({ id: 'a1', exerciseKey: A, runId: 'run_old', questionIndex: 0 }),
+      makeRecord({ id: 'a2', exerciseKey: A, runId: 'run_old', questionIndex: 1 }),
+      makeRecord({ id: 'b1', exerciseKey: B, runId: 'run_b', questionIndex: 0 }),
+    ];
+    // The run the extension holds now has no records of its own.
+    expect(attemptRecordsFor(records, A, 'run_lost').map((record) => record.id)).toEqual([
+      'a1',
+      'a2',
+    ]);
+  });
+
+  it('finds the questions timed before a switch even when the attempt id changed', () => {
+    // The learner's attempt id was lost mid-way (measured live: leaving for
+    // another practice ended the attempt), so the first questions sit under an
+    // older run id. The window is what brings them back.
+    const since = 1_700_000_500_000;
+    const records = [
+      makeRecord({ id: 'old', exerciseKey: A, runId: 'run_previous', startedAt: since - 60_000 }),
+      makeRecord({ id: 'a1', exerciseKey: A, runId: 'run_before', startedAt: since + 1000, questionIndex: 0 }),
+      makeRecord({ id: 'b1', exerciseKey: B, runId: 'run_b', startedAt: since + 2000, questionIndex: 0 }),
+      makeRecord({ id: 'a2', exerciseKey: A, runId: 'run_after', startedAt: since + 3000, questionIndex: 1 }),
+    ];
+    expect(attemptRecordsFor(records, A, 'run_after', since).map((record) => record.id)).toEqual([
+      'a1',
+      'a2',
+    ]);
+    // Without a known boundary it still narrows to the current attempt.
+    expect(attemptRecordsFor(records, A, 'run_after', null).map((record) => record.id)).toEqual([
+      'a2',
+    ]);
+  });
+
+  it('opens one window per attempt and only moves it after a summary', async () => {
+    const area = new FakeArea();
+    expect(await loadAttemptWindow(area, A)).toBeNull();
+
+    // First question of the attempt opens the window ...
+    expect(await ensureAttemptWindow(area, A, 1000)).toBe(1000);
+    // ... and a later question, even under a new attempt id, keeps it.
+    expect(await ensureAttemptWindow(area, A, 5000)).toBe(1000);
+    expect(await loadAttemptWindow(area, B)).toBeNull();
+
+    // Showing the summary closes the attempt: the next question opens a new one.
+    expect(await markAttemptSummarized(area, A, 9000)).toBe(true);
+    expect(await ensureAttemptWindow(area, A, 12_000)).toBe(12_000);
+    expect(area.data[attemptKey(A)]).toEqual({
+      version: 1,
+      since: 12_000,
+      lastSummarizedAt: 9000,
+    });
+  });
+
+  it('returns nothing for a practice with no records at all', () => {
+    expect(attemptRecordsFor([makeRecord({ exerciseKey: B, runId: 'run_b' })], A, 'run_x')).toEqual(
+      [],
+    );
   });
 });
 

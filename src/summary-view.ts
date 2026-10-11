@@ -18,7 +18,7 @@
  * no network calls and stores nothing.
  */
 
-import type { SummaryRow } from './types.js';
+import type { EndReason, QuestionRecord, SummaryRow } from './types.js';
 import { formatDuration } from './timer-engine.js';
 
 /** Id of the host element carrying the summary card. */
@@ -116,6 +116,9 @@ th.dur, td.dur { text-align: right; }
 .tag.correct { background: #e8f5ec; color: #1a7f4b; }
 .tag.incorrect { background: #fdecea; color: #c0392b; }
 .tag.bonus { background: #ece7fb; color: #4b3a99; }
+.tag.missing { background: #f2f4f8; color: #7a869c; }
+.missing-row td { color: #7a869c; }
+.missing-row td.dur { font-weight: 400; }
 .muted { color: #7a869c; font-size: 12px; }
 .note { margin: 10px 0 0; font-size: 11px; color: #7a869c; }
 .empty { margin: 0; font-size: 13px; color: #5b6b85; }
@@ -127,6 +130,162 @@ export interface SummaryRenderInput {
   collapsed: boolean;
   /** Optional overline shown under the note, e.g. where the data lives. */
   storageNote?: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * Building the rows of one attempt (pure, so it is unit tested)
+ * ------------------------------------------------------------------ */
+
+export interface SummaryRowsInput {
+  /**
+   * The records of the attempt being summarised, in capture order. They are
+   * retrieved by practice route and attempt (see `attemptRecordsFor`).
+   */
+  records: QuestionRecord[];
+  /** Questions the page reported for this exercise, when it exposed them. */
+  questionTotal: number | null;
+}
+
+/** The outcome of the learner's first submission, strongest first. */
+const OUTCOME_RANK: Record<string, number> = { correct: 3, incorrect: 2, unknown: 1 };
+
+interface Placed {
+  /** 1-based question number, or null when the page gave no position. */
+  number: number | null;
+  record: QuestionRecord;
+}
+
+/**
+ * Is this record a bonus question?
+ *
+ * Khan Academy restarts its progress index at 0 for the bonus question, so the
+ * only way to tell it apart from question 1 is that its index moves BACKWARDS
+ * from the questions already placed. An index equal to the highest one is not a
+ * bonus: that is the same question timed again (the learner left the practice
+ * mid-question and came back to it), and its rows must add up as one question.
+ */
+function isBonus(record: QuestionRecord, highestRegular: number): boolean {
+  return record.questionIndex !== null && record.questionIndex < highestRegular;
+}
+
+/**
+ * Turn the records of one attempt into the card's rows.
+ *
+ * The card is a table of the EXERCISE's questions, so the rows follow the
+ * questions:
+ *
+ *  - one row per question number, in question order, placed by the number the
+ *    record was captured with (the page's own progress index) and never by the
+ *    order the records arrived in;
+ *  - a question number with no record becomes a `missing` row (「数据缺失」)
+ *    rather than letting the next question's time slide up into its place;
+ *  - several records for the same number (the learner came back to a question
+ *    after leaving the practice, so it was timed in two stretches) become ONE
+ *    row whose time is the sum of the stretches;
+ *  - an optional bonus question is appended after the numbered rows, keeping
+ *    its 「加试」 marker without ever repeating a number.
+ */
+export function buildSummaryRows(input: SummaryRowsInput): SummaryRow[] {
+  const { records, questionTotal } = input;
+
+  const byNumber = new Map<number, QuestionRecord[]>();
+  const unnumbered: QuestionRecord[] = [];
+  const bonus: QuestionRecord[] = [];
+  let highestRegular = -1;
+
+  for (const record of records) {
+    if (record.questionIndex === null) {
+      unnumbered.push(record);
+      continue;
+    }
+    if (isBonus(record, highestRegular)) {
+      bonus.push(record);
+      continue;
+    }
+    highestRegular = record.questionIndex;
+    const number = record.questionIndex + 1;
+    const existing = byNumber.get(number);
+    if (existing) existing.push(record);
+    else byNumber.set(number, [record]);
+  }
+
+  // A bonus row is already shown for every extra question, so the page's own
+  // count is only trusted to reveal trailing gaps when there is no bonus: with
+  // one, the count includes the bonus and would add a phantom empty number.
+  const declared = questionTotal !== null && bonus.length === 0 ? questionTotal : 0;
+  const count = Math.max(highestRegular + 1, declared);
+
+  const rows: SummaryRow[] = [];
+  for (let number = 1; number <= count; number += 1) {
+    const found = byNumber.get(number);
+    rows.push(found ? mergeRecords(number, false, found) : missingRow(number));
+  }
+  // Numbered after the questions of the exercise, so a re-used index can never
+  // print a second 「第 1 题」.
+  bonus.forEach((record, position) => {
+    rows.push(mergeRecords(count + position + 1, true, [record]));
+  });
+  for (const record of unnumbered) {
+    rows.push(mergeRecords(null, false, [record]));
+  }
+  return rows;
+}
+
+/** The row for a question the exercise has but this attempt never timed. */
+function missingRow(number: number): SummaryRow {
+  return {
+    questionNumber: number,
+    missing: true,
+    bonus: false,
+    durationMs: 0,
+    pausedMs: 0,
+    mode: 'countup',
+    limitMs: null,
+    timedOut: false,
+    skipped: false,
+    firstSubmissionOutcome: null,
+    endReason: 'abandoned',
+  };
+}
+
+/**
+ * One row from several records of the same question number: the learner's time
+ * on that question is the sum of the stretches, and the row reports the
+ * strongest outcome the page gave (a question answered correctly is correct,
+ * even if a later visit only shows "no submission").
+ */
+function mergeRecords(
+  number: number | null,
+  isBonusRow: boolean,
+  records: QuestionRecord[],
+): SummaryRow {
+  const first = records[0] as QuestionRecord;
+  let outcome: SummaryRow['firstSubmissionOutcome'] = null;
+  let endReason: EndReason = first.endReason;
+  for (const record of records) {
+    if (record.firstSubmissionOutcome !== null) {
+      const current = outcome === null ? 0 : (OUTCOME_RANK[outcome] ?? 0);
+      if ((OUTCOME_RANK[record.firstSubmissionOutcome] ?? 0) > current) {
+        outcome = record.firstSubmissionOutcome;
+      }
+    }
+    endReason = record.endReason;
+  }
+  const longest = records.reduce((best, record) =>
+    record.durationMs > best.durationMs ? record : best,
+  );
+  return {
+    questionNumber: number,
+    bonus: isBonusRow,
+    durationMs: records.reduce((sum, record) => sum + record.durationMs, 0),
+    pausedMs: records.reduce((sum, record) => sum + record.pausedMs, 0),
+    mode: longest.mode,
+    limitMs: longest.limitMs,
+    timedOut: records.some((record) => record.timedOut),
+    skipped: records.some((record) => record.status === 'skipped' || record.endReason === 'skipped'),
+    firstSubmissionOutcome: outcome,
+    endReason,
+  };
 }
 
 export interface SummaryViewCallbacks {
@@ -270,9 +429,12 @@ export class SummaryView {
 
     const { rows } = input;
     const totalMs = rows.reduce((sum, row) => sum + row.durationMs, 0);
+    const timed = rows.filter((row) => !row.missing).length;
     refs.total.textContent =
       rows.length > 0
-        ? `共 ${rows.length} 题 · 合计 ${formatDuration(totalMs)}`
+        ? timed === rows.length
+          ? `共 ${rows.length} 题 · 合计 ${formatDuration(totalMs)}`
+          : `共 ${rows.length} 题 · ${timed} 题有数据 · 合计 ${formatDuration(totalMs)}`
         : '暂无数据';
 
     if (rows.length === 0) {
@@ -284,8 +446,19 @@ export class SummaryView {
 
     const bodyRows = rows
       .map((row) => {
-        const tag = tagFor(row);
         const number = row.questionNumber === null ? '—' : String(row.questionNumber);
+        // A question the exercise has but this attempt never timed. Its number is
+        // kept and the time cell says so, instead of the next question's time
+        // sliding up into this row.
+        if (row.missing) {
+          return `
+          <tr class="missing-row">
+            <td class="num">第 ${number} 题<span class="tag missing">数据缺失</span></td>
+            <td class="dur">—</td>
+          </tr>
+        `;
+        }
+        const tag = tagFor(row);
         const paused =
           row.pausedMs >= 1000
             ? `<div class="muted">暂停 ${escapeHtml(formatDuration(row.pausedMs))}</div>`

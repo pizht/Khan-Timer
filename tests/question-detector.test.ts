@@ -47,6 +47,7 @@ function snap(overrides: Partial<QuestionSnapshot> = {}): QuestionSnapshot {
     at: T0,
     stableId: null,
     fingerprint: null,
+    stemFingerprint: null,
     progress: null,
     url: 'https://www.khanacademy.org/math/x/e/addition_4',
     regionFound: true,
@@ -575,6 +576,39 @@ describe('QuestionDetector — DOM adapter', () => {
     expect(events.some((e) => e.type === 'same-question')).toBe(false);
 
     window.history.pushState({}, '', '/');
+  });
+
+  /*
+   * The progress marker arrives AFTER the question region on a real page load
+   * (measured on khanacademy.org: region at ~2.2 s, marker at ~3.7 s). Timing
+   * therefore starts with a fingerprint identity. Treating the marker's arrival
+   * as a question change restarted the clock at zero a second into every
+   * question - the data loss this test pins down.
+   */
+  it('upgrades a fingerprint identity to the progress id instead of changing question', () => {
+    start(khanDom({ withProgress: false }));
+    const fingerprintKey = detector.getCurrentKey();
+    expect(fingerprintKey?.startsWith('fp:')).toBe(true);
+
+    // The progress marker renders a moment later, inside the footer.
+    const footer = document.querySelector('[data-testid="content-library-footer"]');
+    const cells = Array.from(
+      { length: 4 },
+      (_, i) =>
+        `<div><div data-testid="exercise-progress-${i}-${i === 0 ? 'incomplete-current' : 'incomplete'}"></div></div>`,
+    ).join('');
+    footer?.insertAdjacentHTML('afterbegin', `<div class="progress">${cells}</div>`);
+    vi.setSystemTime(T0 + 3000);
+    detector.reevaluate('progress-marker-appeared');
+
+    expect(last()).toMatchObject({
+      type: 'identity-upgraded',
+      from: fingerprintKey,
+      to: 'id:progress:1 of 4',
+    });
+    // One question, one change event: the timer is never restarted for this.
+    expect(events.filter((e) => e.type === 'question-changed')).toHaveLength(1);
+    expect(detector.getCurrentKey()).toBe('id:progress:1 of 4');
   });
 
   it('reseed emits a change for the same identity ("Start over")', () => {

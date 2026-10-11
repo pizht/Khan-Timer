@@ -15,7 +15,7 @@
 
 ```bash
 pnpm install
-pnpm run verify          # 类型检查 + 单元测试(205) + 构建 + dist 产物检查(56)
+pnpm run verify          # 类型检查 + 单元测试(225) + 构建 + dist 产物检查(56)
 pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 ```
 
@@ -130,8 +130,10 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
   `Bonus question`（进入加试题，进度索引回到 0），加试题之后才是 `Show summary`。
   这一发现修正了早期「索引倒退＝练习重做」的误读，并已在
   `references/observations.md` 第 10.1、10.1.1 节更正。
-- **结束页表格按答题顺序编号**，索引倒退的那一行标记为「加试」，
-  避免表格里出现两个「第 1 题」。
+- **结束页表格按题号编排**：每行对应「第 N 题」，记录在开始计时那一刻就带着自己的
+  题号（页面进度索引 + 1）；没有计时数据的题号保留题号并标注「数据缺失」，不会把下一题
+  顶上来。索引倒退的那一行（加试题）排在编号题目之后并标记「加试」，
+  因此表格里不会出现两个「第 1 题」。
 - **结束页判定用结构不变式**（无答题表单 + 练习外壳仍在），不依赖只在未登录时出现的
   `eot-phantom-user-registration`。登录态的插入位置未验证，见已知限制第 15 条。
 
@@ -145,6 +147,8 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 加载中误判结束页 | 页面尚未渲染题目时「无答题表单 + 有练习外壳」成立，被当成结束页 | 必须真的计时过一道题才允许进入结束页 | `isSummaryPage` 系列 |
 | 僵留的待写记录阻塞下一题 | 一旦漏检一次切题，上一题的待写记录会让下一题无法结算，整行丢失 | 索引不同则先落盘旧记录再结算新题 | 由端到端记录数验证 |
 | 切换练习丢掉进行中的计时 | 可汗学院是单页应用，换练习只换地址、不重新加载页面：旧练习的计时器没有被收掉，面板带着旧读数出现在新练习的「Ready to practice?」页并继续增长；如果新练习停在同一进度（都是「1 of N」），新题会被当成「题目没变」，旧练习那份进行中的会话随后被当成一次普通切题结算掉，回到旧练习时已累计用时归零、待写记录也没了 | 地址一变就作废旧题目身份（`syncUrl()`，且在 `evaluate()` 里而不只在轮询里，避免新页面的变更先于地址检查被提交）；只要页面已不属于当前练习就把本题**暂存**：冻结时钟、按 `session:<练习路径>` 保留可续接的会话、已答对/跳过的待写记录立刻落盘；面板只在当前练习的页面上显示 | `tests/controller.test.ts`（3 例，jsdom + 内存版 `chrome.storage.local`）、`treats an SPA move to another exercise as a new question, not a continuation`、`tests/storage.test.ts` 的会话冻结用例 |
+| 结束页把题号排错 / 缺数据的题被顶上来 | 卡片按**记录落盘的先后顺位**编号（`position + 1`），并且只按 `runId` 取数。于是：切换练习回来、（或某题根本没计到）时，第 3 题的用时会被印成「第 2 题」，缺数据的那一题直接消失；记录的题号本身也可能是错的——切题是页面**已经前进之后**才被处理的，晚读进度标记会把新题的索引写进上一题的记录 | 题目在**开始计时的那一刻**就把「练习路由 + 第几题 + 本地题目指纹」绑定进记录（`beginQuestion` 绑定，`learnQuestionPosition()` 只在读不到时补，且只对同一道题补）；卡片取数先按练习路由（`exerciseKey`）再收到本轮（`attemptRecordsFor`），行序由纯函数 `buildSummaryRows` 按**题号**生成，**没有数据的题号保留题号并标注「数据缺失」**，同一题的多段用时相加，加试题排在编号题目之后 | `tests/controller.test.ts`「the card of a practice resumed after a switch」3 例（含缺数据题号与题号绑定两条，打回旧逻辑分别会得到 2 行与错位的题号）、`tests/summary-view.test.ts` 的 `buildSummaryRows` 6 例、`tests/storage.test.ts` 的 `attemptRecordsFor` 4 例 |
+| 切换练习时旧练习被误判为结束页 | 应用内切到另一个练习时，旧练习先被拆掉；那一帧「无答题表单 + 无进度点 + 有练习外壳」与结束页判据完全一致（只有地址已变）。扩展据此给旧练习结束本轮并清掉 run，回到旧练习等于开新一轮 —— 于是结束页只剩切换之后的题，切换前那几题显示成「数据缺失」 | 进入结束页的条件加上「当前地址仍属于本轮记录所属的练习」（`run.exerciseKey === exerciseKeyFromUrl(location.href)`） | `tests/controller.test.ts`「moving to another practice inside the app」；真机：修复前卡片 `第1题数据缺失 / 第2题数据缺失 / 第3题0:05 / 第4题0:06`，修复后 `第1题0:09 / 第2题0:07 / 第3题0:04 / 第4题0:14，共 4 题 · 合计 0:36` |
 
 ---
 
@@ -163,7 +167,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 7 | 同一道题触发多次 DOM 变化 | ✅ | 单元测试 `suppresses duplicates…`（50 次观察）、`does not switch on an A -> B -> A flap` |
 | 8 | 正计时暂停、恢复和重置 | ✅ | 端到端 3 项 + `tests/timer-engine.test.ts` |
 | 9 | 倒计时暂停、恢复、归零及提示音开关 | ✅ | 端到端超时 3 项；单元测试 `fires expiredJustNow exactly once so the tone cannot repeat`（提示音只响一次）、`resolves expiry correctly when the limit passes while paused`；提示音开关在弹出面板并有端到端写入验证 |
-| 10 | 页面刷新、标签页切换、浏览器休眠后恢复 | ⚠️ | 刷新由单元测试覆盖（会话恢复 + 配置持久化）；**在同一个标签页里切换练习**由 `tests/controller.test.ts` 覆盖（离开时冻结并保留会话、回来后接着计时、已答对的题立刻落盘）；休眠由「大跨度时钟跳跃」单元测试覆盖。**真实休眠未实测**（见已知限制第 7 条）。 |
+| 10 | 页面刷新、标签页切换、浏览器休眠后恢复 | ⚠️ | 刷新由单元测试覆盖（会话恢复 + 配置持久化）；**在同一个标签页里切换练习**由 `tests/controller.test.ts` 覆盖（离开时冻结并保留会话、回来后接着计时、已答对的题立刻落盘，以及**回到该练习做完整轮后结束页仍按题号完整列出切换前那几题、缺数据的题号写「数据缺失」**）；休眠由「大跨度时钟跳跃」单元测试覆盖。**真实休眠未实测**（见已知限制第 7 条）。 |
 | 11 | 本地存储为空、已有记录或写入失败 | ✅ | `tests/storage.test.ts` 全覆盖：空存储、有记录、`failOnSet` / `failOnGet` / `failOnRemove`、无 `chrome` API、数据损坏清洗 |
 | 12 | 页面结构变化导致无法找到题目区域时的降级处理 | ✅ | 单元测试 `goes uncertain, and keeps timing, when the region disappears`、`hides the panel, freezes the clock and resumes the same question from the frozen value`、`re-evaluates the moment the region comes back, with nothing else changing`；截图 `overlay-degraded-unrecognised.png`（**历史截图**：拍摄于「保持计时」的旧行为下，现行为是隐藏面板并暂停，见下方追加修正） |
 
@@ -180,7 +184,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
 | 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
 | 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 205 用例）；运行说明见 `README.md` → 测试与验证 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 225 用例）；运行说明见 `README.md` → 测试与验证 |
 | 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
 | 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（23 条，含未满足的验收项、切换练习的边界条件与「识别：未识别」的验证保留） |
 
@@ -219,7 +223,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 205 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 225 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

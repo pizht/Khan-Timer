@@ -12,6 +12,7 @@ import {
   SUMMARY_COLLAPSED_ATTR,
   SUMMARY_HOST_ID,
   SummaryView,
+  buildSummaryRows,
 } from '../src/summary-view.js';
 import {
   RUN_TTL_MS,
@@ -193,6 +194,94 @@ describe('recordsForRun', () => {
   it('excludes records written before the run model existed', () => {
     const legacy = makeRecord({ runId: '' });
     expect(recordsForRun([legacy], 'run_1')).toEqual([]);
+  });
+});
+
+describe('buildSummaryRows (the card is a table of the exercise\'s questions)', () => {
+  const rec = (overrides: Partial<QuestionRecord> = {}): QuestionRecord => makeRecord(overrides);
+
+  it('places every row by the question number the record carries', () => {
+    const rows = buildSummaryRows({
+      records: [
+        rec({ id: 'q1', questionIndex: 0, durationMs: 1000 }),
+        rec({ id: 'q2', questionIndex: 1, durationMs: 2000 }),
+        rec({ id: 'q3', questionIndex: 2, durationMs: 3000 }),
+      ],
+      questionTotal: 3,
+    });
+    expect(rows.map((row) => [row.questionNumber, row.durationMs])).toEqual([
+      [1, 1000],
+      [2, 2000],
+      [3, 3000],
+    ]);
+  });
+
+  it('marks a question with no timing data instead of moving the next one up', () => {
+    // Question 2 was never timed (the learner left the practice before it was
+    // read, or its record was lost): the row keeps its number and says so.
+    const rows = buildSummaryRows({
+      records: [
+        rec({ id: 'q1', questionIndex: 0, durationMs: 4000 }),
+        rec({ id: 'q3', questionIndex: 2, durationMs: 7000 }),
+      ],
+      questionTotal: 3,
+    });
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ questionNumber: 1, durationMs: 4000 });
+    expect(rows[1]).toMatchObject({ questionNumber: 2, missing: true, durationMs: 0 });
+    expect(rows[2]).toMatchObject({ questionNumber: 3, durationMs: 7000 });
+  });
+
+  it('reveals trailing numbers the page declared but this attempt never timed', () => {
+    const rows = buildSummaryRows({
+      records: [rec({ questionIndex: 0, durationMs: 1000 })],
+      questionTotal: 4,
+    });
+    expect(rows.map((row) => row.questionNumber)).toEqual([1, 2, 3, 4]);
+    expect(rows.filter((row) => row.missing)).toHaveLength(3);
+  });
+
+  it('adds up the stretches when the same question was timed twice in one attempt', () => {
+    // The learner left the practice mid-question and came back to it.
+    const rows = buildSummaryRows({
+      records: [
+        rec({ id: 'first', questionIndex: 1, durationMs: 4000, pausedMs: 1000, firstSubmissionOutcome: null }),
+        rec({ id: 'second', questionIndex: 1, durationMs: 2500, pausedMs: 500, firstSubmissionOutcome: 'correct' }),
+      ],
+      questionTotal: 2,
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      questionNumber: 2,
+      durationMs: 6500,
+      pausedMs: 1500,
+      firstSubmissionOutcome: 'correct',
+    });
+  });
+
+  it('appends the bonus question after the numbered rows without repeating a number', () => {
+    // Khan Academy restarts the progress index at 0 for the bonus question.
+    const rows = buildSummaryRows({
+      records: [
+        rec({ id: 'q1', questionIndex: 0 }),
+        rec({ id: 'q2', questionIndex: 1 }),
+        rec({ id: 'bonus', questionIndex: 0, firstSubmissionOutcome: null }),
+      ],
+      questionTotal: 3,
+    });
+    expect(rows.map((row) => row.questionNumber)).toEqual([1, 2, 3]);
+    expect(rows[2]).toMatchObject({ questionNumber: 3, bonus: true });
+    expect(rows.filter((row) => row.bonus)).toHaveLength(1);
+    expect(rows.filter((row) => row.questionNumber === 1)).toHaveLength(1);
+  });
+
+  it('keeps a record the page gave no position for, without inventing a number', () => {
+    const rows = buildSummaryRows({
+      records: [rec({ id: 'q1', questionIndex: 0 }), rec({ id: 'anon', questionIndex: null })],
+      questionTotal: 1,
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ questionNumber: null, bonus: false });
   });
 });
 

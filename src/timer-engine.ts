@@ -37,6 +37,8 @@ export interface TimerEngineInit {
   mode: TimerMode;
   limitMs: number | null;
   questionKey: string;
+  /** Stem-and-widget hash, so the same question can be recognised after an identity upgrade. */
+  stemFingerprint?: string | null;
   exerciseKey: string;
   /** Creation instant. */
   now: number;
@@ -50,6 +52,12 @@ export class TimerEngine {
   private phase: TimerPhase = 'idle';
 
   questionKey: string;
+  /**
+   * Stem-and-widget hash of the question being timed. Kept in step with
+   * `questionKey` so a session can be matched even when the page first reports
+   * the question by fingerprint and only later reports its progress position.
+   */
+  stemFingerprint: string | null;
   exerciseKey: string;
 
   /** Running time banked from completed running segments. */
@@ -73,6 +81,7 @@ export class TimerEngine {
     this.mode = init.mode;
     this.limitMs = init.mode === 'countdown' ? init.limitMs : null;
     this.questionKey = init.questionKey;
+    this.stemFingerprint = init.stemFingerprint ?? null;
     this.exerciseKey = init.exerciseKey;
     if (init.autoStart !== false) this.start(init.now);
   }
@@ -321,6 +330,7 @@ export class TimerEngine {
       mode: this.mode,
       phase: this.phase,
       questionKey: this.questionKey,
+      stemFingerprint: this.stemFingerprint,
       exerciseKey: this.exerciseKey,
       startedAt: this.startedAt ?? now,
       accumulatedMs: this.elapsedMs(now),
@@ -346,6 +356,7 @@ export class TimerEngine {
       mode: saved.mode,
       limitMs: saved.limitMs,
       questionKey: saved.questionKey,
+      stemFingerprint: saved.stemFingerprint,
       exerciseKey: saved.exerciseKey,
       now,
       autoStart: false,

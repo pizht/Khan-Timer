@@ -25,6 +25,7 @@ import { ContentController } from '../src/controller.js';
 import { OVERLAY_HOST_ID } from '../src/question-detector.js';
 import { sessionKey } from '../src/storage.js';
 import { SUMMARY_HOST_ID } from '../src/summary-view.js';
+import { formatDuration } from '../src/timer-engine.js';
 
 const T0 = 1_700_000_000_000;
 const EXERCISE_A = '/math/cc-third-grade-math/imp-addition-and-subtraction/e/addition_4';
@@ -95,6 +96,37 @@ function interimDom({ index = 0, total = 4 } = {}): string {
         <button data-testid="exercise-check-answer">Check</button>
       </div>
     </div>`;
+}
+
+/**
+ * The state a real page starts in: the question region is rendered before the
+ * exercise footer's progress marker is, so the extension's first identity for
+ * the question is a fingerprint (measured on khanacademy.org).
+ */
+function loadingDom({ stem = 'Add. 608+251' } = {}): string {
+  return `
+    <div class="bibliotron-exercise">
+      <div class="framework-perseus">
+        <form name="answerform">
+          <div class="perseus-renderer perseus-renderer-responsive">
+            <div data-perseus-paragraph-index="0">${stem}</div>
+            <div class="perseus-widget-container widget-inline-block">
+              <input type="text" class="perseus-input" />
+            </div>
+          </div>
+        </form>
+      </div>
+      <div data-testid="content-library-footer">
+        <div class="progress" data-progress-slot="1"></div>
+        <button data-testid="exercise-check-answer">Check</button>
+      </div>
+    </div>`;
+}
+
+/** The progress marker finally renders, as it does a second into a page load. */
+function renderProgress(index: number, total: number): void {
+  const slot = document.querySelector('[data-progress-slot]');
+  if (slot) slot.innerHTML = progressCells(index, total, 'incomplete');
 }
 
 /** The end-of-exercise screen: chrome, no question, no progress markers. */
@@ -218,6 +250,16 @@ function summaryRowCount(): number {
 
 function summaryText(): string {
   return document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.textContent ?? '';
+}
+
+/** The label and duration cell of each row of the summary card, in order. */
+function summaryRows(): Array<{ label: string; duration: string }> {
+  const rows =
+    document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelectorAll('tbody tr') ?? [];
+  return Array.from(rows).map((row) => ({
+    label: row.querySelector('td.num')?.textContent?.trim() ?? '',
+    duration: row.querySelector('td.dur')?.textContent?.trim() ?? '',
+  }));
 }
 
 /**
@@ -562,5 +604,372 @@ describe('a question that cannot be identified', () => {
     expect(session['phase']).toBe('running');
     expect(session['accumulatedMs']).toBeGreaterThanOrEqual(3000);
     expect(session['pausedMs']).toBeGreaterThanOrEqual(500);
+  });
+});
+
+/* ================================================================== *
+ * The card of the practice the learner came back to
+ * ================================================================== */
+
+/**
+ * The requirement these tests lock in: after switching to another practice and
+ * coming back, finishing the remaining questions produces a card for the
+ * ORIGINAL practice that still lists the questions timed before the switch -
+ * numbered by the question they are about, in question order, with a
+ * 「数据缺失」 row for a number that has no data instead of the next question's
+ * time sliding up into its place.
+ *
+ * Real DOM, real detector, real coordinator, real storage shape (in memory),
+ * read back through the injected card's Shadow DOM as a learner would see it.
+ */
+describe('the card of a practice resumed after a switch', () => {
+  it('still lists the questions timed before the switch, in question order', async () => {
+    const { data } = installChromeStorage();
+
+    // --- Practice A: question 1 of 3, answered, then the page advances ------
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 3 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 3, stem: 'Add. 251+608' }));
+    await advance(1500);
+    expect(savedRecords(data)).toHaveLength(1);
+
+    // ... and question 2 is being answered when the learner leaves.
+    await advance(3000);
+
+    // --- Switch to practice B, which shows its "Ready to practice?" card ----
+    window.history.pushState({}, '', EXERCISE_B);
+    setPage(startCardDom());
+    await advance(1000);
+    expect(panelVisible()).toBe(false);
+
+    // Practice B gets its own run and its own record.
+    setPage(exerciseDom({ index: 0, total: 2, stem: 'Subtract. 400-251' }));
+    await advance(3000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 2, stem: 'Subtract. 500-251' }));
+    await advance(1500);
+    expect(savedRecords(data)).toHaveLength(2);
+
+    // --- Back to practice A, on the same question it was left on ------------
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 1, total: 3, stem: 'Add. 251+608' }));
+    await advance(2000);
+    expect(panelVisible()).toBe(true);
+    // The clock resumed from the parked value, so the ~4 s from before the
+    // switch are still on it (it would read ~2 s if the session had been lost).
+    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
+    // And the time spent in practice B was never billed to it.
+    expect(displayedMs()).toBeLessThan(9000);
+
+    // Question 2 is finished, then question 3, then the end-of-exercise screen.
+    answerCorrectly(1);
+    await advance(300);
+    setPage(exerciseDom({ index: 2, total: 3, stem: 'Add. 999+1' }));
+    await advance(2500);
+    answerCorrectly(2);
+    await advance(300);
+    setPage(summaryDom());
+    await advance(2500);
+
+    // --- What is stored: both practices kept their own run ------------------
+    const records = savedRecords(data);
+    expect(records).toHaveLength(4);
+    const aRecords = records.filter((record) => record['exerciseKey'] === EXERCISE_A);
+    const bRecords = records.filter((record) => record['exerciseKey'] === EXERCISE_B);
+    expect(aRecords).toHaveLength(3);
+    expect(bRecords).toHaveLength(1);
+    const runIds = new Set(aRecords.map((record) => record['runId']));
+    expect(runIds.size).toBe(1);
+    expect(runIds.has('')).toBe(false);
+    expect(bRecords[0]?.['runId']).not.toBe([...runIds][0]);
+
+    // The question answered BEFORE the switch survived with its own duration,
+    // not inflated by the detour through practice B.
+    expect(Number(aRecords[0]?.['durationMs'])).toBeGreaterThanOrEqual(3500);
+    expect(Number(aRecords[0]?.['durationMs'])).toBeLessThan(12_000);
+    // The question that was interrupted mid-way kept the time from before the
+    // switch and added the time after it.
+    expect(Number(aRecords[1]?.['durationMs'])).toBeGreaterThanOrEqual(5000);
+
+    // --- What the learner sees: practice A's card, and only practice A's ----
+    expect(summaryRowCount()).toBe(3);
+    const rows = summaryRows();
+    expect(rows.map((row) => row.label.replace(/答对|答错|超时|已跳过|加试|数据缺失/g, '').trim()))
+      .toEqual(['第 1 题', '第 2 题', '第 3 题']);
+    // Row 1 is the question from before the switch, showing its real duration.
+    expect(rows[0]?.label).toContain('答对');
+    expect(rows[0]?.duration).toBe(formatDuration(Number(aRecords[0]?.['durationMs'])));
+    expect(summaryText()).not.toContain('第 4 题');
+    expect(summaryText()).toContain('共 3 题');
+  });
+
+  it('stamps the number of the question it timed, not the one the page moved on to', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A, question 2 of 3: the record captured for it must carry "2",
+    // even though the progress marker already reads "3 of 3" by the time the
+    // change is processed.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 1, total: 3 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+
+    // The learner submits a WRONG answer (the clock keeps running) and then the
+    // page advances: this question ends without a held record.
+    document
+      .querySelector('[data-testid="exercise-check-answer"]')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    document
+      .querySelector('[data-testid="exercise-progress-1-incomplete-current"]')
+      ?.setAttribute('data-testid', 'exercise-progress-1-incorrect-current');
+    await advance(1000);
+
+    setPage(exerciseDom({ index: 2, total: 3, stem: 'Add. 999+1' }));
+    await advance(2500);
+
+    const records = savedRecords(data);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      questionKey: 'id:progress:2 of 3',
+      questionIndex: 1,
+      questionTotal: 3,
+      firstSubmissionOutcome: 'incorrect',
+    });
+  });
+
+  it('keeps a numbered gap open instead of sliding the next question up', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A: question 1 answered, then the learner leaves for practice B.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 3 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 3, stem: 'Add. 251+608' }));
+    await advance(1500);
+
+    window.history.pushState({}, '', EXERCISE_B);
+    setPage(startCardDom());
+    await advance(1000);
+
+    // Back on practice A the page is on question 3: question 2 was never timed
+    // by the extension (the learner was away while the exercise moved on).
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 2, total: 3, stem: 'Add. 999+1' }));
+    await advance(3000);
+    answerCorrectly(2);
+    await advance(300);
+    setPage(summaryDom());
+    await advance(2500);
+
+    const aRecords = savedRecords(data).filter((record) => record['exerciseKey'] === EXERCISE_A);
+    expect(aRecords.map((record) => record['questionIndex'])).toEqual([0, 2]);
+
+    // Three questions, numbered by the question each row is about: question 2
+    // says 数据缺失 rather than showing question 3's time under its number.
+    expect(summaryRowCount()).toBe(3);
+    const rows = summaryRows();
+    expect(rows[0]?.label).toContain('第 1 题');
+    expect(rows[0]?.duration).toBe(formatDuration(Number(aRecords[0]?.['durationMs'])));
+    expect(rows[1]?.label).toContain('第 2 题');
+    expect(rows[1]?.label).toContain('数据缺失');
+    expect(rows[1]?.duration).toBe('—');
+    expect(rows[2]?.label).toContain('第 3 题');
+    expect(rows[2]?.duration).toBe(formatDuration(Number(aRecords[1]?.['durationMs'])));
+    // The header says how much of the attempt actually has data.
+    expect(summaryText()).toContain('共 3 题');
+    expect(summaryText()).toContain('2 题有数据');
+  });
+});
+
+/* ================================================================== *
+ * The identity upgrade on a real page load (measured live)
+ * ================================================================== */
+
+describe('a question identified before its progress marker exists', () => {
+  it('keeps the time already on the clock when the marker appears', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(loadingDom());
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+
+    expect(panelVisible()).toBe(true);
+    const beforeMarker = displayedMs();
+    expect(beforeMarker).toBeGreaterThanOrEqual(4000);
+
+    renderProgress(0, 4);
+    await advance(1500);
+
+    // The clock carried on: it was never restarted at zero ...
+    expect(panelVisible()).toBe(true);
+    expect(displayedMs()).toBeGreaterThanOrEqual(beforeMarker);
+    // ... and the fingerprint phase did not become a record of its own.
+    expect(savedRecords(data)).toHaveLength(0);
+
+    const session = savedSession(data, EXERCISE_A);
+    expect(session['questionKey']).toBe('id:progress:1 of 4');
+    expect(typeof session['stemFingerprint']).toBe('string');
+  });
+
+  it('resumes the accumulated time across a reload, while the page is still fingerprint-only', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(loadingDom());
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+    renderProgress(0, 4);
+    await advance(1000);
+    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
+
+    const parkedStem = savedSession(data, EXERCISE_A)['stemFingerprint'];
+
+    // Reload the page: the document starts fingerprint-only again.
+    controller.dispose();
+    controller = null;
+    setPage(loadingDom());
+    controller = new ContentController();
+    await controller.init();
+    await advance(1500);
+
+    // The old behaviour started this from zero because the session's key was the
+    // progress id and the page had not reported it yet.
+    expect(panelVisible()).toBe(true);
+    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
+    const resumed = savedSession(data, EXERCISE_A);
+    expect(resumed['stemFingerprint']).toBe(parkedStem);
+  });
+});
+
+/* ================================================================== *
+ * The frame between two practices (measured live)
+ * ================================================================== */
+
+describe('moving to another practice inside the app', () => {
+  it('does not mistake the torn-down frame for the end of the exercise', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A: question 1 of 3 answered, then the page advances to question 2.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 3 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 3, stem: 'Add. 251+608' }));
+    await advance(2500);
+
+    const beforeSwitch = savedRecords(data);
+    expect(beforeSwitch).toHaveLength(1);
+    const firstRunId = beforeSwitch[0]?.['runId'];
+    expect(firstRunId).toBeTruthy();
+
+    // In-app move to practice B. For a moment the old exercise is gone (no
+    // answer form, no progress markers, exercise chrome still up) while the URL
+    // already points at B - structurally identical to the summary screen.
+    window.history.pushState({}, '', EXERCISE_B);
+    setPage('<div class="bibliotron-exercise"></div>');
+    await advance(2000);
+    expect(summaryRowCount()).toBe(0);
+
+    // Practice B renders its first question, one is done there, and B advances
+    // (which is what writes B's held record).
+    setPage(exerciseDom({ index: 0, total: 2, stem: 'Subtract. 400-251' }));
+    await advance(2500);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 2, stem: 'Subtract. 500-251' }));
+    await advance(2000);
+    expect(savedRecords(data)).toHaveLength(2);
+
+    // Back to practice A, on the question it was left on.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 1, total: 3, stem: 'Add. 251+608' }));
+    await advance(2500);
+    answerCorrectly(1);
+    await advance(300);
+    setPage(exerciseDom({ index: 2, total: 3, stem: 'Add. 999+1' }));
+    await advance(2500);
+    answerCorrectly(2);
+    await advance(300);
+    setPage(summaryDom());
+    await advance(2500);
+
+    // Practice A is still ONE attempt: the record written before the switch and
+    // the ones written after it belong to the same run, so the card lists all
+    // three questions instead of only the ones from after the switch.
+    const aRecords = savedRecords(data).filter((record) => record['exerciseKey'] === EXERCISE_A);
+    expect(aRecords).toHaveLength(3);
+    expect(new Set(aRecords.map((record) => record['runId']))).toEqual(new Set([firstRunId]));
+    expect(summaryRowCount()).toBe(3);
+    expect(summaryText()).not.toContain('数据缺失');
+  });
+});
+
+/* ================================================================== *
+ * The earlier questions are found again after the attempt id is lost
+ * ================================================================== */
+
+describe('a card built when the attempt id was lost mid-way', () => {
+  it('still lists the questions timed before the switch', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A: two questions done (records under the first attempt id).
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 4, stem: 'Add. 251+608' }));
+    await advance(2500);
+    answerCorrectly(1);
+    await advance(300);
+    setPage(exerciseDom({ index: 2, total: 4, stem: 'Add. 999+1' }));
+    await advance(2500);
+    expect(savedRecords(data)).toHaveLength(2);
+
+    // The attempt id is lost while the learner is away (this is what a spurious
+    // summary used to do), and a new one starts when they come back.
+    data[sessionKey(EXERCISE_A)] = undefined;
+    delete data['run:' + EXERCISE_A];
+    controller.dispose();
+    controller = new ContentController();
+    await controller.init();
+    await advance(2500);
+
+    // Finish the remaining questions and reach the summary.
+    answerCorrectly(2);
+    await advance(300);
+    setPage(exerciseDom({ index: 3, total: 4, stem: 'Add. 111+222' }));
+    await advance(2500);
+    answerCorrectly(3);
+    await advance(300);
+    setPage(summaryDom());
+    await advance(2500);
+
+    // Four questions, all four with data - the two from before the interruption
+    // are retrieved by practice + attempt window, not by the lost run id.
+    expect(summaryRowCount()).toBe(4);
+    expect(summaryText()).not.toContain('数据缺失');
+    const aRecords = savedRecords(data).filter((record) => record['exerciseKey'] === EXERCISE_A);
+    expect(aRecords).toHaveLength(4);
+    expect(new Set(aRecords.map((record) => record['runId'])).size).toBe(2);
   });
 });

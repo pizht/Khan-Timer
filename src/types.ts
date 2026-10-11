@@ -82,6 +82,12 @@ export interface TimerSerialized {
   mode: TimerMode;
   phase: TimerPhase;
   questionKey: string;
+  /**
+   * Stem-and-widget hash of the question, so a resumed session can still be
+   * matched when the page identifies the question by fingerprint first and only
+   * reports its progress position a moment later.
+   */
+  stemFingerprint: string | null;
   exerciseKey: string;
   startedAt: number;
   accumulatedMs: number;
@@ -112,6 +118,19 @@ export interface QuestionSnapshot {
   stableId: string | null;
   /** Hash over the question stem and answer-widget shape. Null if unavailable. */
   fingerprint: string | null;
+  /**
+   * Hash over the stem and answer-widget shape ONLY (no progress position),
+   * computed on every observation.
+   *
+   * It exists so a question can be recognised as the SAME question across an
+   * identity upgrade: on a real page load the question region appears before the
+   * progress marker does, so the first identity is a fingerprint and it becomes
+   * a progress id a moment later. Without this field that upgrade looks like a
+   * question change - which restarted the timer at zero and lost the time
+   * already spent (reproduced on khanacademy.org, see
+   * scripts/verify-practice-switch.mjs).
+   */
+  stemFingerprint: string | null;
   /** Human-readable progress marker, e.g. "3 of 7". Diagnostics and grouping. */
   progress: string | null;
   /** Page URL at observation time. */
@@ -128,6 +147,11 @@ export interface QuestionSnapshot {
 export type DetectionEvent =
   | { type: 'question-changed'; at: number; from: string | null; to: string; reason: string }
   | { type: 'same-question'; at: number; key: string }
+  /**
+   * The same question, now identified more strongly (fingerprint -> progress
+   * id). The timer must keep running and only its identity is updated.
+   */
+  | { type: 'identity-upgraded'; at: number; from: string; to: string }
   | { type: 'pending'; at: number; candidate: string }
   | { type: 'uncertain'; at: number; reason: string };
 
@@ -196,18 +220,27 @@ export interface ActiveRun {
 /** One row of the end-of-exercise summary panel. */
 export interface SummaryRow {
   /**
-   * 1-based position of this question within the run, in capture order.
+   * The question's own number within the exercise (1-based), i.e. the page's
+   * progress index + 1.
    *
-   * Numbered by order rather than by the page's own index, because Khan
-   * Academy's index restarts at 0 for a bonus question (observed: the control
-   * after the last regular question reads "Bonus question", and the progress
-   * marker goes back to `exercise-progress-0-...`). Ordering by sequence keeps
-   * the rows unambiguous either way.
+   * Numbered by the question the row is about, NOT by the order the records
+   * happened to be captured: after a detour through another practice, or after
+   * a question whose timing was lost, capture order and question order disagree,
+   * and numbering by capture order would print one question's time under
+   * another question's number. Null only for a record the page gave no position
+   * for (an unnumbered bonus question).
    */
   questionNumber: number | null;
   /**
+   * True when the exercise has a question with this number but no timing data
+   * for it (it was never timed, or its record was lost). The card prints
+   * 「数据缺失」 instead of silently moving the next question up.
+   */
+  missing?: boolean;
+  /**
    * True when this row is the optional bonus question, detected by the page's
-   * own index moving backwards within the run.
+   * own index moving backwards within the run. Bonus rows are appended after
+   * the numbered questions so a re-used index never repeats a number.
    */
   bonus: boolean;
   durationMs: number;

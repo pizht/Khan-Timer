@@ -228,6 +228,44 @@ export async function addRecord(
   }
 }
 
+/** Serialised writer for the shared `records` list. */
+export interface RecordQueue {
+  /** Append one record; resolves with the resulting list, or null on failure. */
+  add(record: QuestionRecord): Promise<QuestionRecord[] | null>;
+  /** Resolve once every queued write has landed. */
+  flush(): Promise<void>;
+}
+
+/**
+ * Create the single serialised writer for the `records` list.
+ *
+ * `addRecord` is a read-modify-write (`loadRecords` -> append -> `set`) and
+ * `chrome.storage` offers no transaction: two overlapping calls both read the
+ * old list and the second `set` then drops the first record. That is exactly how
+ * a per-question row can disappear from the end-of-exercise card, and the writes
+ * that overlap in practice are the ones fired without being awaited - e.g.
+ * flushing the held record of a question when the learner leaves a practice for
+ * another one. One queue for every writer makes a torn write impossible.
+ *
+ * `flush()` exists so a reader (the end-of-exercise card) can be certain the
+ * records it is about to load include every write that has already been asked
+ * for.
+ */
+export function createRecordQueue(area: StorageArea | null): RecordQueue {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    add(record) {
+      const write = tail.then(() => addRecord(area, record));
+      // Keep the chain usable even when a write fails (storage unreadable).
+      tail = write.catch(() => undefined);
+      return write;
+    },
+    async flush() {
+      await tail;
+    },
+  };
+}
+
 /** Remove all saved timing records (spec 8.4). Settings are untouched. */
 export async function clearRecords(area: StorageArea | null): Promise<boolean> {
   if (!area) return false;
@@ -319,6 +357,152 @@ export function recordsForRun(records: QuestionRecord[], runId: string): Questio
   return records.filter((record) => record.runId === runId);
 }
 
+/**
+ * The attempt WINDOW of one practice: "what the learner has done on this
+ * practice since this attempt began".
+ *
+ * It exists because the run id can be lost in the middle of an attempt (measured
+ * on khanacademy.org: moving to another practice inside the app ended the attempt
+ * there, so the questions timed before the switch were filed under an older run
+ * id and the card showed them as 数据缺失 even though their records were still
+ * stored). The window is a second, independent way to find them again, keyed by
+ * the practice route and a timestamp instead of by the attempt id.
+ */
+export interface AttemptWindow {
+  version: 1;
+  /** Wall clock the current attempt's window opens at. */
+  since: number;
+  /** When this practice's summary was last shown, if it ever was. */
+  lastSummarizedAt: number | null;
+}
+
+export function attemptKey(exerciseKey: string): string {
+  return `attempt:${exerciseKey}`;
+}
+
+export function sanitizeAttemptWindow(raw: unknown): AttemptWindow | null {
+  if (!isRecord(raw)) return null;
+  const since = Number(raw['since']);
+  if (!Number.isFinite(since)) return null;
+  const lastSummarizedAt = Number(raw['lastSummarizedAt']);
+  return {
+    version: 1,
+    since,
+    lastSummarizedAt: Number.isFinite(lastSummarizedAt) ? lastSummarizedAt : null,
+  };
+}
+
+/** The attempt window of one practice, or null when the learner never started it. */
+export async function loadAttemptWindow(
+  area: StorageArea | null,
+  exerciseKey: string,
+): Promise<AttemptWindow | null> {
+  if (!area) return null;
+  try {
+    const key = attemptKey(exerciseKey);
+    const got = await area.get(key);
+    return sanitizeAttemptWindow(got[key]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open (or keep) the attempt window of a practice and return its start.
+ *
+ * A question starting on a practice opens the window the first time it is seen.
+ * It is only moved forward when the practice's summary has been shown since the
+ * window opened - i.e. when the learner has genuinely started a new attempt.
+ * An attempt id lost in between therefore does NOT start a new window, which is
+ * what keeps the earlier questions of the same attempt retrievable.
+ */
+export async function ensureAttemptWindow(
+  area: StorageArea | null,
+  exerciseKey: string,
+  now: number,
+): Promise<number> {
+  const existing = await loadAttemptWindow(area, exerciseKey);
+  const startsNewAttempt =
+    !existing ||
+    (existing.lastSummarizedAt !== null && existing.lastSummarizedAt >= existing.since);
+  if (!startsNewAttempt && existing) return existing.since;
+  const next: AttemptWindow = {
+    version: 1,
+    since: now,
+    lastSummarizedAt: existing?.lastSummarizedAt ?? null,
+  };
+  if (area) {
+    try {
+      await area.set({ [attemptKey(exerciseKey)]: next });
+    } catch {
+      /* storage unreadable: the card falls back to the run id */
+    }
+  }
+  return next.since;
+}
+
+/** Remember that this practice's summary has just been shown. */
+export async function markAttemptSummarized(
+  area: StorageArea | null,
+  exerciseKey: string,
+  at: number,
+): Promise<boolean> {
+  if (!area) return false;
+  try {
+    const existing = await loadAttemptWindow(area, exerciseKey);
+    const next: AttemptWindow = {
+      version: 1,
+      since: existing?.since ?? at,
+      lastSummarizedAt: at,
+    };
+    await area.set({ [attemptKey(exerciseKey)]: next });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The records that belong on the end-of-exercise card of one practice.
+ *
+ * Selection goes through the PRACTICE first - the route the question was timed
+ * on (`exerciseKey`, i.e. which exercise) - and only then narrows to the attempt
+ * being finished (`runId`): a record from another practice can never appear on
+ * this card even if run ids were to collide or be lost.
+ *
+ * The run id is the attempt discriminator, with the newest attempt recorded for
+ * this practice used as a fallback when the current run has no records at all
+ * (the learner left for another practice, the page reloaded, or the run identity
+ * was otherwise lost). Without that fallback the card would come up empty for a
+ * practice whose questions were timed before the interruption - which is exactly
+ * the data the learner expects to see.
+ */
+export function attemptRecordsFor(
+  records: QuestionRecord[],
+  exerciseKey: string,
+  runId: string,
+  since: number | null = null,
+): QuestionRecord[] {
+  const forExercise = records.filter((record) => record.exerciseKey === exerciseKey);
+
+  // The attempt WINDOW: everything this learner did on this practice since its
+  // summary was last shown, whatever run id it was written under. This is what
+  // brings back the questions timed before the learner left for another practice
+  // when the attempt id changed in between - the records were never lost, only
+  // filed under the previous attempt.
+  if (since !== null) {
+    const window = forExercise.filter((record) => record.startedAt >= since);
+    if (window.length > 0) return window;
+  }
+
+  const exact = forExercise.filter((record) => record.runId === runId);
+  if (exact.length > 0) return exact;
+  // Newest last: the last captured run id is the attempt the learner is on.
+  const newestRunId = forExercise[forExercise.length - 1]?.runId ?? '';
+  if (!newestRunId) return [];
+  return forExercise.filter((record) => record.runId === newestRunId);
+}
+
 /* ------------------------------------------------------------------ *
  * In-flight sessions (survive closing the page)
  * ------------------------------------------------------------------ */
@@ -336,6 +520,7 @@ export function sanitizeSession(raw: unknown): TimerSerialized | null {
     mode: raw['mode'] === 'countdown' ? 'countdown' : 'countup',
     phase: phase === 'paused' || phase === 'finished' ? phase : 'running',
     questionKey,
+    stemFingerprint: typeof raw['stemFingerprint'] === 'string' ? raw['stemFingerprint'] : null,
     exerciseKey: typeof raw['exerciseKey'] === 'string' ? raw['exerciseKey'] : '',
     startedAt: Number(raw['startedAt']) || savedAt,
     accumulatedMs: Math.max(0, accumulatedMs),

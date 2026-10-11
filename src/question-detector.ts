@@ -52,6 +52,15 @@ export interface FingerprintInputs {
   stableId: string | null;
 }
 
+/**
+ * Hash of the stem and answer-widget shape only, ignoring the progress
+ * position. Used to recognise the same question across an identity upgrade (the
+ * progress marker appearing after the region did).
+ */
+export function stemFingerprintOf(stemText: string, widgetSignature: string): string {
+  return hashString([normalizeText(stemText), normalizeText(widgetSignature)].join('\u0001'));
+}
+
 export interface QuestionIdentity {
   key: string;
   confidence: DetectionConfidence;
@@ -209,6 +218,33 @@ export class QuestionChangeDecider {
       this.candidate = null;
       this.lastUncertainReason = null;
       return { type: 'same-question', at: snapshot.at, key };
+    }
+
+    // Identity upgrade, not a question change: the question region is there
+    // before the progress marker is, so the same question is first identified by
+    // fingerprint and a moment later by its progress position. Measured on
+    // khanacademy.org: region at ~2.2 s, marker at ~3.7 s into every page load,
+    // so this is the normal path, not an edge case. Keeping the timer alive here
+    // is what stops the time already spent from being thrown away (and the
+    // session from becoming unresumable) on every load.
+    //
+    // The stem hash is deliberately NOT required: the region can also render its
+    // stem progressively, and the very case this handles is "we have no progress
+    // position yet". Only a less authoritative identity can be upgraded this
+    // way, and only into the progress position the page reports.
+    if (
+      this.currentKey !== null &&
+      !this.currentKey.startsWith('id:progress:') &&
+      snapshot.stableId !== null &&
+      snapshot.stableId.startsWith('progress:')
+    ) {
+      const from = this.currentKey;
+      this.currentKey = key;
+      this.currentConfidence = snapshot.confidence;
+      this.candidate = null;
+      this.lastSwitchAt = snapshot.at;
+      this.lastUncertainReason = null;
+      return { type: 'identity-upgraded', at: snapshot.at, from, to: key };
     }
 
     // A different identity: require it to persist before committing.
@@ -682,6 +718,7 @@ export class QuestionDetector {
         at,
         stableId: null,
         fingerprint: null,
+        stemFingerprint: null,
         progress: null,
         url: location.href,
         regionFound: false,
@@ -726,6 +763,7 @@ export class QuestionDetector {
       at,
       stableId: identity?.confidence === 'stable-id' ? (attributeId ?? progressId) : null,
       fingerprint: identity && identity.confidence !== 'stable-id' ? identity.key.slice(3) : null,
+      stemFingerprint: stemFingerprintOf(stemText, widgetSignature),
       progress,
       url: location.href,
       regionFound: true,
