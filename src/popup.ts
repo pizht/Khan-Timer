@@ -61,7 +61,32 @@ const CONFIDENCE_LABEL: Record<string, string> = {
 
 let area: StorageArea | null = null;
 let settings: Settings | null = null;
-let saveHintTimer: number | null = null;
+
+/**
+ * A one-shot status line that lives inside the card it belongs to. Feedback
+ * must appear where the control was used: a settings failure belongs in the
+ * settings card, and a record-clearing result belongs in the records card.
+ */
+function createHint(id: string): {
+  show(text: string, kind?: 'info' | 'error'): void;
+} {
+  let timer: number | null = null;
+  return {
+    show(text, kind = 'info') {
+      const hint = el(id);
+      hint.textContent = text;
+      hint.classList.toggle('error', kind === 'error');
+      hint.hidden = false;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        hint.hidden = true;
+      }, 1600);
+    },
+  };
+}
+
+const saveHint = createHint('save-hint');
+const recordsHint = createHint('records-hint');
 
 async function main(): Promise<void> {
   area = chromeStorageArea();
@@ -90,6 +115,11 @@ function paintSettings(current: Settings): void {
   (el<HTMLInputElement>('overlayVisible')).checked = current.overlayVisible;
   (el<HTMLInputElement>('overlayCollapsed')).checked = current.overlayCollapsed;
   (el<HTMLInputElement>('resumeAcrossReload')).checked = current.resumeAcrossReload;
+  (el<HTMLInputElement>('developerMode')).checked = current.developerMode;
+
+  // Detection internals are opt-in: without 开发者模式 the popup shows only the
+  // status line, the timer readout and the question progress row.
+  document.body.classList.toggle('dev', current.developerMode);
 
   // Countup mode never counts down, so the per-question limit is meaningless
   // there: hide it rather than show a control that does nothing. The value is
@@ -103,7 +133,7 @@ function wireSettingsInputs(): void {
     settings = sanitizeSettings({ ...settings, ...patch });
     paintSettings(settings);
     const ok = await saveSettings(area, settings);
-    showSaveHint(ok ? '已保存' : '保存失败：浏览器存储不可用');
+    if (!ok) saveHint.show('保存失败：浏览器存储不可用', 'error');
   };
 
   el<HTMLSelectElement>('defaultMode').addEventListener('change', (event) => {
@@ -125,16 +155,7 @@ function wireSettingsInputs(): void {
   bindToggle('overlayVisible', 'overlayVisible');
   bindToggle('overlayCollapsed', 'overlayCollapsed');
   bindToggle('resumeAcrossReload', 'resumeAcrossReload');
-}
-
-function showSaveHint(text: string): void {
-  const hint = el('save-hint');
-  hint.textContent = text;
-  hint.hidden = false;
-  if (saveHintTimer !== null) window.clearTimeout(saveHintTimer);
-  saveHintTimer = window.setTimeout(() => {
-    hint.hidden = true;
-  }, 1600);
+  bindToggle('developerMode', 'developerMode');
 }
 
 /* ------------------------------------------------------------------ *
@@ -144,6 +165,9 @@ function showSaveHint(text: string): void {
 async function paintRecords(): Promise<void> {
   const records = await loadRecords(area);
   el('record-count').textContent = `已保存 ${records.length} 条`;
+  // With nothing saved there is nothing to clear: an always-visible danger
+  // button that does nothing is noise, so only offer it when it has an effect.
+  el<HTMLButtonElement>('clear-records').hidden = records.length === 0;
   const list = el<HTMLUListElement>('recent');
   list.replaceChildren();
 
@@ -198,7 +222,10 @@ function wireClearButton(): void {
   el<HTMLButtonElement>('clear-records').addEventListener('click', () => {
     void (async () => {
       const ok = await clearRecords(area);
-      showSaveHint(ok ? '记录已清除' : '清除失败：浏览器存储不可用');
+      // The result belongs next to the button that was pressed, not in the
+      // settings card, which knows nothing about records.
+      if (ok) recordsHint.show('记录已清除');
+      else recordsHint.show('清除失败：浏览器存储不可用', 'error');
       await paintRecords();
     })();
   });
@@ -253,7 +280,7 @@ function paintStatus(response: StatusResponse): void {
     statusText.textContent = '尚未开始：请点击页面上的「Let\u2019s go」';
     statusText.className = 'status-value warn';
   } else if (!diag.regionFound) {
-    statusText.textContent = '未找到题目区域（此页面暂不支持）';
+    statusText.textContent = '未找到题目区域';
     statusText.className = 'status-value bad';
   } else if (diag.confidence === 'none') {
     statusText.textContent = '已找到题目区域，但无法识别题目';
@@ -262,7 +289,7 @@ function paintStatus(response: StatusResponse): void {
     statusText.textContent = '识别置信度较低';
     statusText.className = 'status-value warn';
   } else {
-    statusText.textContent = '正在计时（已可靠识别）';
+    statusText.textContent = '正在计时';
     statusText.className = 'status-value ok';
   }
 

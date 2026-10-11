@@ -92,6 +92,11 @@ body {
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 
+/* Detection internals (strategy, confidence, fingerprint, last event, raw
+   diagnostics) are only rendered while 开发者模式 is on. The progress row is
+   deliberately not marked, so it shows in both modes. */
+body:not(.dev) .dev-only { display: none; }
+
 .warning {
   margin: 8px 0 0;
   padding: 6px 7px;
@@ -144,6 +149,9 @@ input[type="checkbox"] { margin: 0; }
 
 .hint { margin: 6px 0 0; font-size: 11px; color: var(--muted); }
 .hint[hidden] { display: none; }
+/* One-shot feedback (saved / cleared / storage failure) reads as a status
+   colour, so a failure is not mistaken for ordinary help text. */
+.hint.error { color: var(--red); }
 
 .record-actions {
   display: flex;
@@ -165,6 +173,7 @@ input[type="checkbox"] { margin: 0; }
   font-weight: 600;
   cursor: pointer;
 }
+.btn[hidden] { display: none; }
 .btn:hover { background: #eef2f8; }
 .btn.danger { color: var(--red); border-color: rgba(192, 57, 43, 0.35); }
 .btn.danger:hover { background: #fdecea; }

@@ -22,14 +22,14 @@
         <span class="tag expired-tag" id="expired-tag" hidden>已超时</span>
       </div>
       <dl class="kv" id="details" hidden>
-        <dt>识别方式</dt><dd id="d-strategy">—</dd>
-        <dt>置信度</dt><dd id="d-confidence">—</dd>
-        <dt>题目指纹</dt><dd id="d-question" class="mono">—</dd>
+        <dt class="dev-only">识别方式</dt><dd id="d-strategy" class="dev-only">—</dd>
+        <dt class="dev-only">置信度</dt><dd id="d-confidence" class="dev-only">—</dd>
+        <dt class="dev-only">题目指纹</dt><dd id="d-question" class="mono dev-only">—</dd>
         <dt>题目进度</dt><dd id="d-progress">—</dd>
-        <dt>最近事件</dt><dd id="d-event">—</dd>
+        <dt class="dev-only">最近事件</dt><dd id="d-event" class="dev-only">—</dd>
       </dl>
       <p class="warning" id="warning" hidden></p>
-      <details class="diag" id="diag-box" hidden>
+      <details class="diag dev-only" id="diag-box" hidden>
         <summary>诊断信息</summary>
         <pre id="diag-text"></pre>
       </details>
@@ -71,16 +71,21 @@
         <span>关闭页面后重新打开时，继续上次用时</span>
       </label>
 
-      <p class="hint" id="save-hint" hidden>已保存</p>
+      <label class="field field-inline">
+        <input id="developerMode" type="checkbox" />
+        <span>开发者模式</span>
+      </label>
+
+      <p class="hint" id="save-hint" hidden></p>
     </section>
 
     <section class="card">
-      <h2>本地记录</h2>
-      <p class="hint">记录只保存在本机浏览器中，不会上传到任何服务器。</p>
+      <h2>历史记录</h2>
       <div class="record-actions">
         <span id="record-count" class="count">已保存 0 条</span>
         <button id="clear-records" class="btn danger" type="button">清除全部记录</button>
       </div>
+      <p class="hint" id="records-hint" hidden></p>
       <ul id="recent" class="recent"></ul>
     </section>
 

@@ -148,6 +148,21 @@ describe('sanitizeSettings', () => {
     expect(sanitizeSettings({ soundEnabled: 'false' }).soundEnabled).toBe(false);
     expect(sanitizeSettings({ soundEnabled: 'true' }).soundEnabled).toBe(true);
   });
+
+  it('keeps developer mode off unless it was explicitly enabled', () => {
+    // The popup hides the detection internals when this is false, so a junk or
+    // missing value must never switch them on.
+    expect(sanitizeSettings({}).developerMode).toBe(false);
+    expect(sanitizeSettings({ developerMode: 'nonsense' }).developerMode).toBe(false);
+    expect(sanitizeSettings({ developerMode: true }).developerMode).toBe(true);
+    expect(sanitizeSettings({ developerMode: 'true' }).developerMode).toBe(true);
+  });
+
+  it('round-trips developer mode through storage', async () => {
+    const area = new FakeArea();
+    await saveSettings(area, { ...DEFAULT_SETTINGS, developerMode: true });
+    expect((await loadSettings(area)).developerMode).toBe(true);
+  });
 });
 
 describe('settings persistence', () => {

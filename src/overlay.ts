@@ -164,6 +164,8 @@ const SHADOW_CSS = `
   font-size: 10px; color: #7a869c;
   display: flex; justify-content: space-between; gap: 6px;
 }
+/* The .foot rule sets display, which would beat the UA [hidden] rule. */
+.foot[hidden] { display: none; }
 .confidence-weak { color: #b06f00; }
 .confidence-none { color: #c0392b; }
 .pill {
@@ -320,6 +322,9 @@ export class OverlayView {
     const collapsed = settings.overlayCollapsed;
     this.refs.body.style.display = collapsed ? 'none' : '';
     this.refs.pill.style.display = collapsed ? '' : 'none';
+    // Diagnostics footer follows 开发者模式 immediately, without waiting for the
+    // next render tick.
+    this.refs.foot.hidden = !settings.developerMode;
     this.refs.collapseBtn.textContent = collapsed ? '+' : '–';
     this.refs.collapseBtn.title = collapsed ? '展开面板' : '折叠面板';
     this.refs.collapseBtn.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
@@ -406,16 +411,20 @@ export class OverlayView {
       )}`);
     }
     if (state.progress) bits.push(`<span class="k">进度</span> ${escapeHtml(state.progress)}`);
-    const confidenceClass = `confidence-${state.confidence}`;
-    const confidenceLabel =
-      state.confidence === 'stable-id'
-        ? '题目ID'
-        : state.confidence === 'fingerprint'
-          ? '指纹'
-          : state.confidence === 'weak'
-            ? '弱信号'
-            : '未识别';
-    bits.push(`<span class="${confidenceClass}">识别：${confidenceLabel}</span>`);
+    // Detection internals are opt-in (popup → 开发者模式). Without it the panel
+    // keeps only what a learner needs: the time, the limit and the progress.
+    if (this.settings.developerMode) {
+      const confidenceClass = `confidence-${state.confidence}`;
+      const confidenceLabel =
+        state.confidence === 'stable-id'
+          ? '题目ID'
+          : state.confidence === 'fingerprint'
+            ? '指纹'
+            : state.confidence === 'weak'
+              ? '弱信号'
+              : '未识别';
+      bits.push(`<span class="${confidenceClass}">识别：${confidenceLabel}</span>`);
+    }
     refs.meta.innerHTML = bits.join('');
 
     if (state.warning) {
@@ -426,10 +435,14 @@ export class OverlayView {
       refs.warning.textContent = '';
     }
 
+    // The footer (last detector event + saved-record count) is diagnostics, so
+    // it is only rendered in 开发者模式. The record count is still visible in the
+    // popup's 本地记录 card.
     const eventEl = refs.foot.querySelector<HTMLElement>('[data-role="event"]');
     if (eventEl) eventEl.textContent = state.lastEvent;
     const recordsEl = refs.foot.querySelector<HTMLElement>('[data-role="records"]');
     if (recordsEl) recordsEl.textContent = `已记录 ${state.savedRecords}`;
+    refs.foot.hidden = !this.settings.developerMode;
   }
 
   /* ---------------- dragging ---------------- */

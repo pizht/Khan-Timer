@@ -243,6 +243,13 @@ export interface Settings {
   /** Overlay starts collapsed to a compact pill. */
   overlayCollapsed: boolean;
   /**
+   * Show the detection internals in the popup: selector strategy, confidence,
+   * question key/fingerprint, the last detector event and the raw diagnostics
+   * block. Off by default so the popup stays readable for a normal learner;
+   * the question progress row is shown either way.
+   */
+  developerMode: boolean;
+  /**
    * The end-of-exercise "per-question times" card starts collapsed to its
    * header line. Remembered so the learner does not have to fold it every time.
    */
