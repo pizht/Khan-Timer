@@ -662,9 +662,9 @@ describe('SummaryView — collapse', () => {
  * Page-integrated presentation
  *
  * The card is page chrome, not a floating widget: square corners, no drop
- * shadow, flush with the divider the page draws below it, and a borderless
- * grey chevron for the collapse control. jsdom does not lay out, so the
- * stylesheet is asserted directly.
+ * shadow, one 1px divider of its own (the top) in the page's line colour, and a
+ * borderless grey chevron for the collapse control. jsdom does not lay out, so
+ * the stylesheet is asserted directly.
  * ================================================================== */
 
 describe('SummaryView — page-integrated presentation', () => {
@@ -685,6 +685,15 @@ describe('SummaryView — page-integrated presentation', () => {
 
   it('leaves no gap between its bottom edge and the page divider below', () => {
     expect(css()).toMatch(/\.card\s*\{[^}]*margin:\s*16px\s+0\s+0\s*;/);
+  });
+
+  it('draws only a top divider, and in the page\'s own line colour', () => {
+    const sheet = css();
+    // No box: left/right/bottom are the page's own lines. Ours landed next to
+    // them and rendered those edges 2px thick against 1px at the top.
+    expect(sheet).toMatch(/\.card\s*\{[^}]*border:\s*0\s*;/);
+    expect(sheet).toMatch(/\.card\s*\{[^}]*border-top:\s*1px\s+solid\s+#e1e1e1\s*;/);
+    expect(sheet).not.toMatch(/\.card\s*\{[^}]*border:\s*1px\s+solid/);
   });
 
   it('styles the chevron button with no border, fill or corner radius', () => {

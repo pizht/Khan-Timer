@@ -18,10 +18,13 @@
  * no network calls and stores nothing.
  *
  * Visual language (revised at the user's request): the card is page chrome, not
- * a floating widget, so it has SQUARE corners, no drop shadow, sits directly on
- * the divider that Khan Academy draws above its own results section (no margin
- * below), and its collapse control is a plain grey chevron rather than a
- * boxed triangle glyph.
+ * a floating widget. It has SQUARE corners, no drop shadow, and — crucially —
+ * draws only ONE line of its own: the divider across its top. The page already
+ * draws the line that closes the card at the bottom and its own border closes
+ * the left/right edge, so drawing a full box as well doubled every one of those
+ * edges (measured on the real page: 2 CSS px against 1 px at the top) and made
+ * the card look like a box nested inside the page's own box. The collapse
+ * control is a plain grey chevron rather than a boxed triangle glyph.
  */
 
 import type { EndReason, QuestionRecord, SummaryRow } from './types.js';
@@ -69,9 +72,15 @@ const SHADOW_CSS = `
   line-height: 1.45;
   color: #0b214a;
   background: #ffffff;
-  border: 1px solid rgba(11, 33, 74, 0.16);
-  /* Square, unshadowed: a rounded, elevated card read as a foreign widget
-     dropped onto the summary screen. Border only, like the page's own boxes. */
+  /* A section of the page, not a box on top of it. Only the TOP divider is ours,
+     drawn 1px in the same colour the page uses for its own rules (#e1e1e1,
+     measured from the divider above 「Course mastery」and from the content
+     column's left border). Left/right/bottom are left to the page: the page's
+     own lines are already there, and a second 1px border of ours landed right
+     next to each of them, so those edges rendered 2px thick while the top edge
+     rendered 1px — the "box inside a box" look. */
+  border: 0;
+  border-top: 1px solid #e1e1e1;
   border-radius: 0;
   box-shadow: none;
   text-align: left;
