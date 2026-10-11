@@ -206,6 +206,29 @@ pnpm run build
 卡片只有**两列**（题目、用时）。不显示计时模式列 —— 需要判断是否超时看
 「超时」标记即可。若某一题中途暂停过（≥1 秒），会在用时下方以小字标注暂停时长。
 
+**可以折叠。** 点标题行（或左侧的 `▾` 按钮）即可收起明细，只剩标题与合计：
+
+```
+本轮每题用时                    ▾        共 5 题 · 合计 0:19
+────────────────────────────────────────────────────────────
+题目                                                  用时
+第 1 题  答对                                          0:04
+第 2 题  已跳过                                        0:05
+第 3 题  答对                                          0:03
+第 4 题  答对                                          0:03
+第 5 题  加试                                          0:03
+```
+
+折叠后：
+
+```
+本轮每题用时                    ▸        共 5 题 · 合计 0:19
+```
+
+- 折叠状态会**记住**，下次打开结束页仍然是折叠的。
+- 收起后标题与合计始终可见，随时点一下就能展开。
+- 也可以用键盘操作：`Tab` 聚焦到 `▾` 按钮后按 `Enter` / `空格`。
+
 - 只统计**这一轮**的题目；同一套练习重做时会开始新的一轮。
 - 表格**按答题顺序编号**，而不是用页面自己的进度索引。原因是可汗学院在
   「加试题」阶段会把索引重新从 0 开始，用索引编号会让表格里出现两个「第 1 题」。
@@ -241,7 +264,7 @@ pnpm run build
 
 | 键 | 内容 |
 |---|---|
-| `settings` | 上表中的全部设置 + 面板位置/折叠状态。 |
+| `settings` | 上表中的全部设置 + 悬浮面板的位置/折叠状态 + 结束页用时卡片的折叠状态（`summaryCollapsed`，默认展开）。 |
 | `records` | 计时记录数组，**最多保留最近 500 条**，超出丢弃最旧的。 |
 | `session:<练习路径>` | 进行中的题目会话，用于关闭页面后续接；超过 12 小时自动清理。 |
 
@@ -275,7 +298,7 @@ pnpm run test            # vitest run
 pnpm run test:watch      # vitest 监听
 pnpm run icons           # 重新生成图标 PNG
 pnpm run verify          # typecheck + test + build + dist 检查
-pnpm run verify:edge     # 真实 Edge 端到端验证（60 项）
+pnpm run verify:edge     # 真实 Edge 端到端验证（67 项）
 pnpm run verify:all      # 上面两个一起跑
 ```
 
@@ -296,7 +319,7 @@ pnpm run verify:all      # 上面两个一起跑
 pnpm run test
 ```
 
-169 个用例，覆盖：
+181 个用例，覆盖：
 
 - **计时引擎**（`tests/timer-engine.test.ts`）：从时间戳计算用时、暂停/继续、
   大跨度时钟跳跃（模拟休眠一小时）、倒计时精确归零时刻、超时只提示一次、
@@ -344,7 +367,8 @@ pnpm run verify:edge
 把 `dist/` 作为解压扩展加载进真实 Edge，打开真实练习页，通过 CDP 驱动，
 直接从面板的 Shadow DOM 读取数值。
 
-**60 项检查**，包括：面板注入与 Shadow DOM 隔离、正计时自动开始、数值随时间增长、
+**74 项检查**（少数检查依赖该轮实际出现的题型，例如没有加试题时那一项会标为
+inconclusive，因此总数会略有浮动），包括：面板注入与 Shadow DOM 隔离、正计时自动开始、数值随时间增长、
 暂停不累积 / 继续恢复、重置归零、**答对即停表**、**确认跳过即停表**、**切题结算并保存记录**、
 **切题后题目标识变化**、**切题后保存记录**、倒计时实时生效、
 **倒计时归零显示超时状态且不跳题**、弹出面板可打开并读写存储、
@@ -357,9 +381,9 @@ pnpm run verify:edge
 | 层级 | 结果 |
 |---|---|
 | `pnpm run typecheck` | 通过 |
-| `pnpm run test` | **169 / 169 通过** |
+| `pnpm run test` | **181 / 181 通过** |
 | `scripts/verify-dist.mjs` | **56 / 56 通过** |
-| `scripts/verify-extension.mjs` | **67 / 67 通过**（另有 1 项因该轮没有加试题而无法判定，会明确标为 inconclusive，不计为通过或失败） |
+| `scripts/verify-extension.mjs` | **74 / 74 通过**（另有 1 项因该轮没有加试题而无法判定，会明确标为 inconclusive，既不计通过也不计失败） |
 
 真实页面上的验证记录、逐步操作与结果见
 [`references/page-inventory.md`](references/page-inventory.md) 与
@@ -387,11 +411,11 @@ khan-academy-timer/
 │   ├── manifest.json
 │   ├── popup.html / popup.css
 │   └── icons/                 # 由 scripts/make-icons.mjs 生成
-├── tests/                     # vitest 单元测试（4 个文件，169 个用例）
+├── tests/                     # vitest 单元测试（4 个文件，181 个用例）
 ├── scripts/
 │   ├── build.mjs              # esbuild 打包到 dist/
 │   ├── verify-dist.mjs        # 构建产物机器校验（56 项）
-│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（60 项）
+│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（67 项）
 │   └── make-icons.mjs         # 生成 PNG 图标（只用 Node 内置模块）
 ├── references/                # ★ 实现前的页面采集资料与脱敏 DOM 样本
 │   ├── collection-report.md   # 采集方法、页面、访问限制

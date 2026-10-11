@@ -8,7 +8,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SummaryView, SUMMARY_HOST_ID } from '../src/summary-view.js';
+import {
+  SUMMARY_COLLAPSED_ATTR,
+  SUMMARY_HOST_ID,
+  SummaryView,
+} from '../src/summary-view.js';
 import {
   RUN_TTL_MS,
   clearRun,
@@ -241,6 +245,7 @@ describe('SummaryView', () => {
   it('renders one row per question with its duration', () => {
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [
         makeRow({ questionNumber: 1, durationMs: 12_000 }),
         makeRow({ questionNumber: 2, durationMs: 65_000, firstSubmissionOutcome: 'incorrect' }),
@@ -262,6 +267,7 @@ describe('SummaryView', () => {
   it('tags timed-out, skipped, correct and incorrect rows', () => {
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [
         makeRow({ questionNumber: 1, timedOut: true, mode: 'countdown', limitMs: 10_000 }),
         makeRow({ questionNumber: 2, skipped: true, endReason: 'skipped', firstSubmissionOutcome: null }),
@@ -279,6 +285,7 @@ describe('SummaryView', () => {
   it('marks the optional bonus question', () => {
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [
         makeRow({ questionNumber: 1 }),
         makeRow({ questionNumber: 2 }),
@@ -293,6 +300,7 @@ describe('SummaryView', () => {
     // still show an unambiguous sequence.
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [
         makeRow({ questionNumber: 1 }),
         makeRow({ questionNumber: 2 }),
@@ -312,6 +320,7 @@ describe('SummaryView', () => {
     // The mode column was removed on request; the table is question + duration.
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [
         makeRow({ questionNumber: 1, mode: 'countdown', limitMs: 60_000 }),
         makeRow({ questionNumber: 2, mode: 'countup' }),
@@ -334,6 +343,7 @@ describe('SummaryView', () => {
   it('keeps paused time as a note under the duration, not a column', () => {
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [makeRow({ questionNumber: 1, mode: 'countdown', limitMs: 60_000, pausedMs: 5_000 })],
     });
     const root = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot;
@@ -345,7 +355,7 @@ describe('SummaryView', () => {
 
   it('reports an empty state instead of pretending there is data', () => {
     const view = mount();
-    view.render({ rows: [] });
+    view.render({ collapsed: false, rows: [] });
     const text = shadowText();
     expect(text).toContain('本轮没有记录到题目用时');
     expect(text).not.toContain('第 1 题');
@@ -353,8 +363,9 @@ describe('SummaryView', () => {
 
   it('re-rendering replaces rows rather than appending duplicates', () => {
     const view = mount();
-    view.render({ rows: [makeRow({ questionNumber: 1 })] });
+    view.render({ collapsed: false, rows: [makeRow({ questionNumber: 1 })] });
     view.render({
+      collapsed: false,
       rows: [makeRow({ questionNumber: 1 }), makeRow({ questionNumber: 2 })]
     });
     const rows = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelectorAll('tbody tr');
@@ -364,6 +375,7 @@ describe('SummaryView', () => {
   it('handles an unknown question number without printing "null"', () => {
     const view = mount();
     view.render({
+      collapsed: false,
       rows: [makeRow({ questionNumber: null })]
     });
     const text = shadowText();
@@ -373,7 +385,7 @@ describe('SummaryView', () => {
 
   it('destroy removes the host entirely', () => {
     const view = mount();
-    view.render({ rows: [makeRow()] });
+    view.render({ collapsed: false, rows: [makeRow()] });
     expect(view.isMounted()).toBe(true);
     view.destroy();
     expect(document.getElementById(SUMMARY_HOST_ID)).toBeNull();
@@ -382,7 +394,7 @@ describe('SummaryView', () => {
 
   it('mounting twice replaces the previous host instead of stacking cards', () => {
     const view = mount();
-    view.render({ rows: [makeRow()] });
+    view.render({ collapsed: false, rows: [makeRow()] });
     view.mount(document.getElementById('host') as Element, 'append');
     expect(document.querySelectorAll(`#${SUMMARY_HOST_ID}`).length).toBe(1);
   });
@@ -393,7 +405,7 @@ describe('SummaryView', () => {
     style.textContent = `#${SUMMARY_HOST_ID} .card { display: none !important; }`;
     document.head.append(style);
     const view = mount();
-    view.render({ rows: [makeRow()] });
+    view.render({ collapsed: false, rows: [makeRow()] });
     const card = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelector('.card');
     expect(card).not.toBeNull();
     // A rule outside the shadow root cannot match a node inside it.
@@ -426,5 +438,122 @@ describe('sanitizeRecords keeps the run fields and tolerates legacy records', ()
     });
     expect(record?.status).toBe('skipped');
     expect(record?.endReason).toBe('skipped');
+  });
+});
+
+/* ================================================================== *
+ * Collapsing the card
+ * ================================================================== */
+
+describe('SummaryView — collapse', () => {
+  const mount = (opts: { collapsed: boolean; onToggle?: (c: boolean) => void }) => {
+    document.body.innerHTML = '<div id="host"></div>';
+    const view = new SummaryView(opts.onToggle ? { onToggleCollapsed: opts.onToggle } : {});
+    view.mount(document.getElementById('host') as Element, 'before-host');
+    view.render({ collapsed: opts.collapsed, rows: [makeRow({ questionNumber: 1 }), makeRow({ questionNumber: 2 })] });
+    return view;
+  };
+
+  const root = (): ShadowRoot | null | undefined =>
+    document.getElementById(SUMMARY_HOST_ID)?.shadowRoot;
+  const card = (): Element | null => root()?.querySelector('.card') ?? null;
+  const toggle = (): HTMLButtonElement | null =>
+    root()?.querySelector('[data-role="toggle"]') ?? null;
+
+  it('exposes a collapse control in the header', () => {
+    mount({ collapsed: false });
+    expect(toggle()).not.toBeNull();
+    expect(toggle()?.tagName).toBe('BUTTON');
+    expect(toggle()?.getAttribute('type')).toBe('button');
+  });
+
+  it('renders expanded by default, with the table visible', () => {
+    mount({ collapsed: false });
+    expect(card()?.classList.contains('collapsed')).toBe(false);
+    expect(root()?.querySelectorAll('tbody tr').length).toBe(2);
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('true');
+    // The state is mirrored onto the host so it can be read from the page.
+    expect(document.getElementById(SUMMARY_HOST_ID)?.getAttribute(SUMMARY_COLLAPSED_ATTR)).toBe('false');
+  });
+
+  it('hides the rows when collapsed but keeps the title and total', () => {
+    mount({ collapsed: true });
+    expect(card()?.classList.contains('collapsed')).toBe(true);
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
+    expect(document.getElementById(SUMMARY_HOST_ID)?.getAttribute(SUMMARY_COLLAPSED_ATTR)).toBe('true');
+    // The table is still in the DOM (so expansion is instant) but not rendered.
+    const text = (root()?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).toContain('本轮每题用时');
+    expect(text).toContain('共 2 题');
+  });
+
+  it('toggles on a click of the header, and reports the new state', () => {
+    const seen: boolean[] = [];
+    const view = mount({ collapsed: false, onToggle: (c) => seen.push(c) });
+    (root()?.querySelector('[data-role="head"]') as HTMLElement).click();
+    expect(view.isCollapsed()).toBe(true);
+    expect(seen).toEqual([true]);
+    (root()?.querySelector('[data-role="head"]') as HTMLElement).click();
+    expect(view.isCollapsed()).toBe(false);
+    expect(seen).toEqual([true, false]);
+  });
+
+  it('toggles exactly once when the control itself is clicked', () => {
+    // The button sits inside the clickable header; only one handler may fire.
+    const seen: boolean[] = [];
+    const view = mount({ collapsed: false, onToggle: (c) => seen.push(c) });
+    toggle()?.click();
+    expect(seen).toHaveLength(1);
+    expect(view.isCollapsed()).toBe(true);
+  });
+
+  it('is keyboard operable through the toggle button', () => {
+    const seen: boolean[] = [];
+    mount({ collapsed: false, onToggle: (c) => seen.push(c) });
+    const button = toggle();
+    expect(button?.getAttribute('aria-label')).toBe('折叠用时明细');
+    button?.click();
+    expect(seen).toEqual([true]);
+  });
+
+  it('reflects a persisted collapsed state on the next render', () => {
+    const view = mount({ collapsed: false });
+    view.render({ collapsed: true, rows: [makeRow({ questionNumber: 1 })] });
+    expect(view.isCollapsed()).toBe(true);
+    expect(card()?.classList.contains('collapsed')).toBe(true);
+    view.render({ collapsed: false, rows: [makeRow({ questionNumber: 1 })] });
+    expect(view.isCollapsed()).toBe(false);
+  });
+
+  it('still shows the empty state while collapsed', () => {
+    const view = mount({ collapsed: false });
+    view.render({ collapsed: true, rows: [] });
+    const text = (root()?.textContent ?? '').replace(/\s+/g, ' ');
+    expect(text).toContain('暂无数据');
+    expect(text).toContain('本轮没有记录到题目用时');
+  });
+
+  it('does not leak the toggle click to the page', () => {
+    // The card lives inside Khan Academy's page; a click must not reach the
+    // site's own document-level handlers.
+    let pageSawClick = false;
+    const listener = (): void => {
+      pageSawClick = true;
+    };
+    document.addEventListener('click', listener);
+    try {
+      mount({ collapsed: false });
+      toggle()?.click();
+      expect(pageSawClick).toBe(false);
+    } finally {
+      document.removeEventListener('click', listener);
+    }
+  });
+
+  it('starting collapsed does not render the note either', () => {
+    mount({ collapsed: true });
+    expect(card()?.classList.contains('collapsed')).toBe(true);
+    // The body is hidden via CSS; the card itself stays compact.
+    expect(root()?.querySelector('.body')).not.toBeNull();
   });
 });

@@ -236,6 +236,31 @@ async function main() {
     const shot = path.join(OUT_DIR, 'summary-per-question-times.png');
     await cdp.screenshot(shot);
     console.log(`wrote ${shot}`);
+
+    // Collapse the card and capture that state too.
+    const collapsed = await cdp.evaluate(String.raw`(() => {
+      const host = document.getElementById('khan-academy-timer-summary');
+      const toggle = host && host.shadowRoot && host.shadowRoot.querySelector('[data-role="toggle"]');
+      if (!toggle) return false;
+      toggle.click();
+      return true;
+    })()`);
+    if (collapsed) {
+      await sleep(1200);
+      const state = await cdp.evaluate(String.raw`(() => {
+        const host = document.getElementById('khan-academy-timer-summary');
+        const root = host.shadowRoot;
+        const rows = Array.from(root.querySelectorAll('tbody tr'));
+        return {
+          collapsed: root.querySelector('.card').classList.contains('collapsed'),
+          visibleRows: rows.filter((r) => r.getBoundingClientRect().height > 0).length,
+        };
+      })()`);
+      console.log(`collapsed state: ${JSON.stringify(state)}`);
+      const shot2 = path.join(OUT_DIR, 'summary-card-collapsed.png');
+      await cdp.screenshot(shot2);
+      console.log(`wrote ${shot2}`);
+    }
   } finally {
     try {
       cdp?.ws.close();

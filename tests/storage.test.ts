@@ -130,6 +130,20 @@ describe('sanitizeSettings', () => {
     expect(position.y).toBe(DEFAULT_SETTINGS.overlayPosition.y);
   });
 
+  it('defaults the summary-card collapse state to expanded', () => {
+    expect(sanitizeSettings({}).summaryCollapsed).toBe(false);
+    expect(sanitizeSettings({ summaryCollapsed: true }).summaryCollapsed).toBe(true);
+    // Tolerates the stringy form storage may hold, and junk falls back.
+    expect(sanitizeSettings({ summaryCollapsed: 'true' }).summaryCollapsed).toBe(true);
+    expect(sanitizeSettings({ summaryCollapsed: 'nonsense' }).summaryCollapsed).toBe(false);
+  });
+
+  it('round-trips the summary-card collapse state', async () => {
+    const area = new FakeArea();
+    await saveSettings(area, { ...DEFAULT_SETTINGS, summaryCollapsed: true });
+    expect((await loadSettings(area)).summaryCollapsed).toBe(true);
+  });
+
   it('accepts string booleans that storage may hold', () => {
     expect(sanitizeSettings({ soundEnabled: 'false' }).soundEnabled).toBe(false);
     expect(sanitizeSettings({ soundEnabled: 'true' }).soundEnabled).toBe(true);

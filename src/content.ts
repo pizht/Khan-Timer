@@ -136,6 +136,8 @@ class ContentController {
   private pendingRecord: QuestionRecord | null = null;
   /** Set while the learner is on the end-of-exercise summary screen. */
   private inSummary = false;
+  /** Rows shown on the summary card, kept so settings changes can re-render. */
+  private summaryRows: SummaryRow[] = [];
   /** URL the summary was entered on, to notice a real navigation away. */
   private summaryUrl: string | null = null;
   private lastPageCheckAt = 0;
@@ -583,9 +585,14 @@ class ContentController {
       this.render();
       return;
     }
-    this.summaryView = this.summaryView ?? new SummaryView();
+    this.summaryRows = rows;
+    this.summaryView =
+      this.summaryView ??
+      new SummaryView({
+        onToggleCollapsed: (collapsed) => void this.updateSettings({ summaryCollapsed: collapsed }),
+      });
     this.summaryView.mount(host.element, host.insert);
-    this.summaryView.render({ rows });
+    this.renderSummary();
     this.render();
   }
 
@@ -604,9 +611,18 @@ class ContentController {
     this.run = null;
     this.pendingRecord = null;
     this.skipInitiated = false;
+    this.summaryRows = [];
     this.detector?.start();
     this.lastEventText = '检测到新一轮答题';
     this.render();
+  }
+
+  /** Re-render the card from the last rows and the current settings. */
+  private renderSummary(): void {
+    this.summaryView?.render({
+      rows: this.summaryRows,
+      collapsed: this.settings.summaryCollapsed,
+    });
   }
 
   private findSummaryHost(): { element: Element; insert: 'before-host' | 'append' } | null {

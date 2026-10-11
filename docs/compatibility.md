@@ -90,6 +90,28 @@
 补充：卡片高度也从被拉伸的 625px 回到自然高度 255px —— 原因是 `flex-grow: 1`
 在 column flex 容器里会把卡片撑满容器高度。
 
+### 1.2.2 结束页卡片可折叠
+
+用户要求「这个时间总览面板可以折叠」，已实现并验证：
+
+| 验证项 | 结果 |
+|---|---|
+| 卡片提供折叠控件 | ✅ `hasToggle=true`，`aria-label=折叠用时明细` |
+| 默认展开，明细已排版 | ✅ `collapsed=false visibleRows=4/4` |
+| 折叠后隐藏每题明细 | ✅ `collapsed=true visibleRows=0/4` |
+| 折叠后仍显示标题与合计 | ✅ 文本含「本轮每题用时」「共 4 题 · 合计 0:19」 |
+| 状态同步给无障碍属性 | ✅ `data-khan-timer-summary-collapsed=true`、`aria-expanded=false` |
+| 再次展开恢复明细 | ✅ `collapsed=false visibleRows=4` |
+| 折叠偏好被持久化 | ✅ 存储中 `summaryCollapsed=true` |
+
+实现要点：
+
+- 折叠控件放在标题行内，**整行可点**；按钮也可用键盘操作（`Tab` + `Enter`/`空格`）。
+- 明细虽然被折叠，但在 DOM 中保留，展开是瞬时的；验证脚本因此用**实际渲染高度**
+  而不是 DOM 节点数来判断是否真的隐藏了。
+- 折叠状态写入本地设置（`summaryCollapsed`），下次打开结束页保持折叠。
+- 折叠控件的点击会 `stopPropagation`，不会传到可汗学院自己的文档级点击处理。
+
 ### 1.3 本轮采集修正：`addition_4` 有 bonus question
 
 驱动整轮时发现最后一道普通题之后的控件文案是 **`Bonus question`**（不是

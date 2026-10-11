@@ -242,6 +242,11 @@ export interface Settings {
   overlayVisible: boolean;
   /** Overlay starts collapsed to a compact pill. */
   overlayCollapsed: boolean;
+  /**
+   * The end-of-exercise "per-question times" card starts collapsed to its
+   * header line. Remembered so the learner does not have to fold it every time.
+   */
+  summaryCollapsed: boolean;
   overlayPosition: OverlayPosition;
   /**
    * When true, closing the page freezes the question clock and reopening the

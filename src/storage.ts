@@ -40,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
   overlayVisible: true,
   overlayCollapsed: false,
+  summaryCollapsed: false,
   overlayPosition: { anchor: 'top-right', x: 16, y: 96 },
   resumeAcrossReload: true,
   detectionDebounceMs: 400,
@@ -91,6 +92,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     soundEnabled: toBoolean(source['soundEnabled'], DEFAULT_SETTINGS.soundEnabled),
     overlayVisible: toBoolean(source['overlayVisible'], DEFAULT_SETTINGS.overlayVisible),
     overlayCollapsed: toBoolean(source['overlayCollapsed'], DEFAULT_SETTINGS.overlayCollapsed),
+    summaryCollapsed: toBoolean(source['summaryCollapsed'], DEFAULT_SETTINGS.summaryCollapsed),
     overlayPosition: sanitizePosition(anchor),
     resumeAcrossReload: toBoolean(source['resumeAcrossReload'], DEFAULT_SETTINGS.resumeAcrossReload),
     detectionDebounceMs: Math.round(

@@ -275,6 +275,43 @@ const PAGE_STATE = `(() => {
   };
 })()`;
 
+/**
+ * Collapse state of the injected summary card.
+ *
+ * `visibleRows` uses real rendered height rather than counting DOM nodes: the
+ * table stays in the DOM while collapsed so that expanding is instant, so only
+ * geometry proves it is actually hidden.
+ */
+const SUMMARY_CARD_STATE = `(() => {
+  ${NORM_JS}
+  const host = document.getElementById('khan-academy-timer-summary');
+  if (!host || !host.shadowRoot) return { present: false };
+  const root = host.shadowRoot;
+  const card = root.querySelector('.card');
+  const toggle = root.querySelector('[data-role="toggle"]');
+  const rows = Array.from(root.querySelectorAll('tbody tr'));
+  return {
+    present: true,
+    collapsed: card ? card.classList.contains('collapsed') : null,
+    hostAttr: host.getAttribute('data-khan-timer-summary-collapsed'),
+    hasToggle: !!toggle,
+    toggleLabel: toggle ? toggle.getAttribute('aria-label') : null,
+    ariaExpanded: toggle ? toggle.getAttribute('aria-expanded') : null,
+    visibleRows: rows.filter((r) => r.getBoundingClientRect().height > 0).length,
+    totalRows: rows.length,
+    text: norm(root.textContent),
+  };
+})()`;
+
+/** Click the card's collapse control. */
+const CLICK_SUMMARY_TOGGLE = `(() => {
+  const host = document.getElementById('khan-academy-timer-summary');
+  const toggle = host && host.shadowRoot && host.shadowRoot.querySelector('[data-role="toggle"]');
+  if (!toggle) return false;
+  toggle.click();
+  return true;
+})()`;
+
 /** Parse m:ss / h:mm:ss into milliseconds. */
 function parseDisplay(text) {
   if (!text) return null;
@@ -888,6 +925,55 @@ async function main() {
         !/加试加试|已跳过已跳过|答对答对/.test(summaryCard?.rows?.join(' ') ?? ''),
         JSON.stringify(summaryCard?.rows),
       );
+      // The card must be collapsible down to its header line.
+      const cardBefore = await cdp.evaluate(SUMMARY_CARD_STATE);
+      check(
+        'the summary card exposes a collapse control',
+        cardBefore?.hasToggle === true,
+        `hasToggle=${cardBefore?.hasToggle} label=${cardBefore?.toggleLabel}`,
+      );
+      check(
+        'the summary card starts expanded, with the rows laid out',
+        cardBefore?.collapsed === false && (cardBefore?.visibleRows ?? 0) >= 3,
+        `collapsed=${cardBefore?.collapsed} visibleRows=${cardBefore?.visibleRows}/${cardBefore?.totalRows}`,
+      );
+
+      const toggled = await cdp.evaluate(CLICK_SUMMARY_TOGGLE);
+      await sleep(900);
+      const cardCollapsed = await cdp.evaluate(SUMMARY_CARD_STATE);
+      check(
+        'collapsing the card hides the per-question rows',
+        toggled === true &&
+          cardCollapsed?.collapsed === true &&
+          cardCollapsed?.visibleRows === 0,
+        `collapsed=${cardCollapsed?.collapsed} visibleRows=${cardCollapsed?.visibleRows}/${cardCollapsed?.totalRows}`,
+      );
+      check(
+        'the collapsed card keeps the title and the total',
+        /本轮每题用时/.test(cardCollapsed?.text ?? '') &&
+          /共 \d+ 题/.test(cardCollapsed?.text ?? ''),
+        (cardCollapsed?.text ?? '').slice(0, 90),
+      );
+      check(
+        'the collapse state is mirrored for accessibility',
+        cardCollapsed?.hostAttr === 'true' && cardCollapsed?.ariaExpanded === 'false',
+        `hostAttr=${cardCollapsed?.hostAttr} aria-expanded=${cardCollapsed?.ariaExpanded}`,
+      );
+
+      await cdp.evaluate(CLICK_SUMMARY_TOGGLE);
+      await sleep(900);
+      const cardExpanded = await cdp.evaluate(SUMMARY_CARD_STATE);
+      check(
+        'expanding the card brings the rows back',
+        cardExpanded?.collapsed === false &&
+          (cardExpanded?.visibleRows ?? 0) === (cardBefore?.visibleRows ?? -1),
+        `collapsed=${cardExpanded?.collapsed} visibleRows=${cardExpanded?.visibleRows}`,
+      );
+
+      // Collapse once more so the preference is exercised for persistence.
+      await cdp.evaluate(CLICK_SUMMARY_TOGGLE);
+      await sleep(900);
+
       check(
         'the float panel is hidden on the summary screen',
         (await cdp.evaluate(READ_PANEL))?.visible === false,
@@ -973,15 +1059,21 @@ async function main() {
         popupState?.uiMode === 'countup',
         `uiMode=${popupState?.uiMode}`,
       );
-      // Nothing is written to storage until the user actually changes a
-      // setting, so the popup must be showing its merged defaults here.
+      // The popup must show the EFFECTIVE configuration before the user changes
+      // anything through it. Storage itself may already hold a settings object
+      // (collapsing the summary card writes one), so this asserts the rendered
+      // values rather than the absence of the key.
       check(
-        'popup shows default settings before anything is changed',
-        popupState?.settings === null &&
-          popupState?.uiMode === 'countup' &&
+        'popup shows the effective settings before anything is changed through it',
+        popupState?.uiMode === 'countup' &&
           popupState?.uiLimit === '60' &&
           popupState?.checkboxes?.overlayCollapsed === false,
         `settings=${JSON.stringify(popupState?.settings)} uiMode=${popupState?.uiMode} uiLimit=${popupState?.uiLimit}`,
+      );
+      check(
+        'collapsing the summary card was persisted',
+        popupState?.settings?.summaryCollapsed === true,
+        `summaryCollapsed=${popupState?.settings?.summaryCollapsed}`,
       );
 
       // Drive a real settings change from the popup's own controls.
@@ -1144,6 +1236,12 @@ async function main() {
         const sound = document.getElementById('soundEnabled');
         sound.checked = true;
         sound.dispatchEvent(new Event('change', { bubbles: true }));
+        // The popup has no control for this one; write it back directly so the
+        // extension is left in its default state.
+        const all = await chrome.storage.local.get('settings');
+        await chrome.storage.local.set({
+          settings: Object.assign({}, all.settings || {}, { summaryCollapsed: false }),
+        });
         await new Promise((r) => setTimeout(r, 600));
         return true;
       })()`);
