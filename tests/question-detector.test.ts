@@ -25,6 +25,7 @@ import {
   QuestionDetector,
   buildQuestionIdentity,
   identityKeyOf,
+  isPositionedQuestionKey,
 } from '../src/question-detector.js';
 import {
   completionTriggerFor,
@@ -133,6 +134,31 @@ describe('identityKeyOf', () => {
 
   it('returns null when neither exists', () => {
     expect(identityKeyOf(snap())).toBeNull();
+  });
+});
+
+/**
+ * The signal the floating panel is gated on: has the page said WHICH question is
+ * on screen? A fingerprint only says "this content looks stable", which is also
+ * true of an exercise's start card while it still holds the previous question's
+ * framework — the state in which the panel used to flash and then close.
+ */
+describe('isPositionedQuestionKey', () => {
+  it('accepts the verified progress identity', () => {
+    expect(isPositionedQuestionKey('id:progress:3 of 7')).toBe(true);
+  });
+
+  it('accepts a site-provided per-question id', () => {
+    expect(isPositionedQuestionKey('id:abc123')).toBe(true);
+  });
+
+  it('rejects a fingerprint identity', () => {
+    expect(isPositionedQuestionKey('fp:9f2c1ab4')).toBe(false);
+  });
+
+  it('rejects a progress-only weak identity and no identity at all', () => {
+    expect(isPositionedQuestionKey('prog:2 of 5')).toBe(false);
+    expect(isPositionedQuestionKey(null)).toBe(false);
   });
 });
 
@@ -1153,6 +1179,27 @@ describe('site-profile: shouldLeaveSummary', () => {
     expect(
       shouldLeaveSummary({ onSummary: false, questionFormPresent: true, urlChanged: false }),
     ).toBe(true);
+  });
+
+  it('leaves when the intro card comes up, even though no question is on screen yet', () => {
+    // Measured on a real page: the card was injected a moment before the
+    // "Ready to practice?" screen finished rendering, and then sat on top of it
+    // forever, because neither a question form nor a URL change ever appeared.
+    expect(
+      shouldLeaveSummary({
+        onSummary: false,
+        questionFormPresent: false,
+        urlChanged: false,
+        startCardPresent: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLeaveSummary({
+        onSummary: false,
+        questionFormPresent: false,
+        urlChanged: false,
+      }),
+    ).toBe(false);
   });
 
   it('leaves when the page navigated somewhere else', () => {

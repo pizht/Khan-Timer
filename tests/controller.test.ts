@@ -80,6 +80,40 @@ function startCardDom(): string {
 }
 
 /**
+ * The Perseus question region on its own, with NO progress marker.
+ *
+ * The intro card of a not-yet-started practice contains exactly this much of a
+ * question (measured live): the framework and the renderer are in the DOM
+ * before the exercise footer that holds `exercise-progress-*`. It carries no
+ * position, so it is not a question being solved.
+ */
+function questionRegionDom({ stem = 'Add. 608+251' } = {}): string {
+  return `
+    <div class="framework-perseus">
+      <form name="answerform">
+        <div class="perseus-renderer perseus-renderer-responsive">
+          <div data-perseus-paragraph-index="0">${stem}</div>
+          <div class="perseus-widget-container widget-inline-block">
+            <input type="text" class="perseus-input" />
+          </div>
+        </div>
+      </form>
+    </div>`;
+}
+
+/** The intro card as the real page renders it: still holding that leftover region. */
+function startCardWithLeftoverRegionDom(): string {
+  return `
+    <div class="bibliotron-exercise">
+      <div data-testid="start-task-card-summary">
+        <h2>Ready to practice?</h2>
+        <button>Let\u2019s go</button>
+      </div>
+      ${questionRegionDom()}
+    </div>`;
+}
+
+/**
  * The exercise chrome with the question area momentarily gone — what the page
  * looks like while the SPA swaps a question, and the state the panel labels
  * 识别：未识别.
@@ -880,16 +914,18 @@ describe('a question identified before its progress marker exists', () => {
     await controller.init();
     await advance(4000);
 
-    expect(panelVisible()).toBe(true);
-    const beforeMarker = displayedMs();
-    expect(beforeMarker).toBeGreaterThanOrEqual(4000);
+    // The page has not said WHERE in the exercise this question is, so nothing
+    // is shown yet (see "the panel appears only over a question being solved") -
+    // but the clock is already running, so the time spent waiting for the marker
+    // is not lost.
+    expect(panelVisible()).toBe(false);
 
     renderProgress(0, 4);
     await advance(1500);
 
     // The clock carried on: it was never restarted at zero ...
     expect(panelVisible()).toBe(true);
-    expect(displayedMs()).toBeGreaterThanOrEqual(beforeMarker);
+    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
     // ... and the fingerprint phase did not become a record of its own.
     expect(savedRecords(data)).toHaveLength(0);
 
@@ -920,12 +956,21 @@ describe('a question identified before its progress marker exists', () => {
     await controller.init();
     await advance(1500);
 
-    // The old behaviour started this from zero because the session's key was the
-    // progress id and the page had not reported it yet.
-    expect(panelVisible()).toBe(true);
-    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
+    // Hidden panel, because the page has not reported the question's position
+    // yet - but the clock is running and picked up the accumulated time rather
+    // than starting from zero.
+    expect(panelVisible()).toBe(false);
+    expect(savedSession(data, EXERCISE_A)['accumulatedMs']).toBeGreaterThanOrEqual(4000);
+
+    // The fingerprint phase is written back to the SAME session, which is what
+    // lets the marker's arrival upgrade it instead of starting a new question.
     const resumed = savedSession(data, EXERCISE_A);
     expect(resumed['stemFingerprint']).toBe(parkedStem);
+
+    renderProgress(0, 4);
+    await advance(1500);
+    expect(panelVisible()).toBe(true);
+    expect(displayedMs()).toBeGreaterThanOrEqual(5000);
   });
 });
 
@@ -1045,5 +1090,182 @@ describe('a card built when the attempt id was lost mid-way', () => {
     const aRecords = savedRecords(data).filter((record) => record['exerciseKey'] === EXERCISE_A);
     expect(aRecords).toHaveLength(4);
     expect(new Set(aRecords.map((record) => record['runId'])).size).toBe(2);
+  });
+});
+
+/* ================================================================== *
+ * The card must only ever appear on a real summary screen
+ * ================================================================== */
+
+describe('the card is bound to the end-of-exercise screen', () => {
+  it('does not appear on a page that merely has no question on it', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A with a question being timed (nothing answered yet, so no
+    // question is finished).
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(4000);
+    expect(panelVisible()).toBe(true);
+
+    // The page loses its question for a moment (an in-app transition, or the
+    // "Ready to practice?" screen being re-rendered) while the URL stays on
+    // practice A and the current attempt is still known. Structurally this is
+    // "no answer form, no progress markers, exercise chrome present" - the old
+    // summary test in full - but no question was ever finished here.
+    setPage('<div class="bibliotron-exercise"></div>');
+    await advance(3000);
+    expect(summaryRowCount()).toBe(0);
+    expect(document.getElementById(SUMMARY_HOST_ID)).toBeNull();
+
+    // ... and when the intro card renders, the card is still not there.
+    setPage(startCardDom());
+    await advance(2500);
+    expect(summaryRowCount()).toBe(0);
+    expect(document.getElementById(SUMMARY_HOST_ID)).toBeNull();
+  });
+
+  it('is removed if the intro card comes up while it is on screen', async () => {
+    const { data } = installChromeStorage();
+
+    // A complete little run: one question, answered, then the summary.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 1 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+    answerCorrectly(0);
+    await advance(300);
+    setPage(summaryDom());
+    await advance(2500);
+    expect(summaryRowCount()).toBe(1);
+
+    // The learner starts the exercise again: the intro card replaces the summary
+    // (no question form yet, URL unchanged). The card must not stay on top of it.
+    setPage(startCardDom());
+    await advance(2500);
+    expect(document.getElementById(SUMMARY_HOST_ID)).toBeNull();
+    expect(summaryRowCount()).toBe(0);
+  });
+});
+
+/* ================================================================== *
+ * The panel must only appear over a question that is being solved
+ * ================================================================== */
+
+/**
+ * The reported bug:
+ *
+ *   "在第一次打开一个 practice 起始页的时候，会出现计时小面板，然后马上关闭。"
+ *
+ * Opening a practice's start card showed the floating panel for a moment and
+ * then took it away again. Two causes, both covered here:
+ *
+ *  1. the panel was in the DOM *visible by default*: the overlay host was
+ *     appended without a display and only hidden once the controller rendered,
+ *     so it was on screen for the stretch between mounting and the first
+ *     detection result;
+ *  2. an engine was created from a leftover question region — the Perseus
+ *     framework is in the DOM before the exercise footer's progress marker is —
+ *     so the panel had something to show, and only disappeared once the page
+ *     finished tearing the old question down.
+ *
+ * The rule these tests lock in: the panel appears only over a question the page
+ * has actually confirmed is being solved, and it is never on screen before that
+ * confirmation arrives.
+ */
+describe('the panel appears only over a question being solved', () => {
+  it('is not on screen at any point while a practice start card is up', async () => {
+    installChromeStorage();
+
+    // The learner arrives at the practice route. The start card is up, but the
+    // Perseus framework of the previous question has not been torn down yet -
+    // exactly the state that used to flash the panel and then close it.
+    window.history.pushState({}, '', EXERCISE_B);
+    setPage(startCardWithLeftoverRegionDom());
+    controller = new ContentController();
+    await controller.init();
+
+    // The overlay is in the DOM but is born hidden, and stays hidden.
+    expect(overlayHost()).not.toBeNull();
+    expect(overlayHost()?.style.display).toBe('none');
+
+    await advance(4000);
+    expect(panelVisible()).toBe(false);
+    expect(document.getElementById(SUMMARY_HOST_ID)).toBeNull();
+    // ... and it stays off once the page clears the leftover region too.
+    setPage(startCardDom());
+    await advance(2000);
+    expect(panelVisible()).toBe(false);
+  });
+
+  it('does not show the previous practice clock when the learner switches to another practice', async () => {
+    const { data } = installChromeStorage();
+
+    // Practice A: a question is being timed.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 1, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5000);
+    expect(panelVisible()).toBe(true);
+
+    // The learner switches to practice B, whose start card comes up while the
+    // old question region is still in the DOM.
+    window.history.pushState({}, '', EXERCISE_B);
+    setPage(startCardWithLeftoverRegionDom());
+    // Practice A's clock is not painted on it: the panel is taken down as soon
+    // as the page stops being practice A, not when the leftover region is
+    // finally cleared (which is what used to make the panel appear and then
+    // close by itself).
+    await advance(300);
+    expect(panelVisible()).toBe(false);
+    await advance(1500);
+    expect(panelVisible()).toBe(false);
+
+    // Practice A's time survived the switch, as it must.
+    expect(savedSession(data, EXERCISE_A)['accumulatedMs']).toBeGreaterThanOrEqual(4000);
+
+    // Practice B's own question appears: the panel comes up on it.
+    setPage(exerciseDom({ index: 0, total: 2, stem: 'Subtract. 400-251' }));
+    await advance(2000);
+    expect(panelVisible()).toBe(true);
+  });
+
+  it('comes up as soon as the page confirms a question is being solved', async () => {
+    installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(1000);
+
+    expect(panelVisible()).toBe(true);
+    expect(diagnostics()).toMatchObject({ unidentified: false, enginePhase: 'running' });
+  });
+
+  it('comes up when the learner starts the exercise from the intro card', async () => {
+    installChromeStorage();
+
+    // The start card is up, with the leftover region and no position.
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(startCardWithLeftoverRegionDom());
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+    expect(panelVisible()).toBe(false);
+
+    // The learner presses "Let's go": the card goes, question 1 renders together
+    // with the progress marker. That is the confirmation the panel waits for.
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    await advance(2000);
+    expect(panelVisible()).toBe(true);
+    // The clock shows the time since the region appeared, i.e. it includes the
+    // stretch spent looking at the intro card. That is deliberate (time already
+    // measured is never thrown away) and recorded as known limitation 30.
+    expect(displayedMs()).toBeGreaterThanOrEqual(1000);
   });
 });

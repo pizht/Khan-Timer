@@ -1,5 +1,5 @@
 /**
- * Popup "本地记录" section.
+ * Popup "历史记录" section.
  *
  * Two rules are covered here:
  *  - The clear-all control is only rendered when there is something to clear:
@@ -176,7 +176,7 @@ describe('popup records section', () => {
 
     expect(hint('records-hint').textContent).toBe('记录已清除');
     expect(isVisible(hint('records-hint'))).toBe(true);
-    expect(cardOf('records-hint')?.querySelector('h2')?.textContent).toBe('本地记录');
+    expect(cardOf('records-hint')?.querySelector('h2')?.textContent).toBe('历史记录');
 
     // The settings card must stay silent: it has no idea what was cleared.
     expect(hint('save-hint').hidden).toBe(true);

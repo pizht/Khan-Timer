@@ -115,6 +115,32 @@ export function identityKeyOf(snapshot: QuestionSnapshot): string | null {
 }
 
 /**
+ * Does this identity carry the question's POSITION in the exercise, i.e. is the
+ * page saying *which* question of the set is on screen?
+ *
+ * This is the difference between "a question is being solved" and "something
+ * that looks like a question is in the DOM", and it is the signal the floating
+ * panel is gated on:
+ *
+ *  - `id:progress:<n> of <m>` — the verified Khan Academy identity [VER], read
+ *    from `exercise-progress-<index>-<state>-current`;
+ *  - `id:<site id>` — a site-provided per-question id (none exists on Khan
+ *    Academy today, see `STABLE_QUESTION_ID_ATTRS`);
+ *  - `fp:<hash>` — a fingerprint over the region's text and widget shape, which
+ *    is all an init card / a not-yet-torn-down framework can offer, and which
+ *    by construction also matches a screen that is not a question at all.
+ *
+ * A fingerprinted page therefore still gets its clock (that is what makes the
+ * time measured between "region rendered" and "progress marker rendered" land
+ * on the right question — see the identity upgrade in `QuestionChangeDecider`),
+ * but it does not get a panel: the panel waits for the page to confirm that a
+ * question with a position is being solved.
+ */
+export function isPositionedQuestionKey(key: string | null): boolean {
+  return key !== null && key.startsWith('id:');
+}
+
+/**
  * De-bounced, duplicate-suppressing question-change decision logic.
  *
  * A change is committed only when a *different* identity has been observed

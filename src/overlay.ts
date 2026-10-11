@@ -225,6 +225,11 @@ export class OverlayView {
     host.id = OVERLAY_HOST_ID;
     // A marker attribute the detector can exclude cheaply.
     host.setAttribute('data-khan-timer-ignore', 'true');
+    // Born hidden, and hidden HERE rather than in the first render: the panel
+    // must never be painted between being mounted and the controller's first
+    // verdict. It is only ever shown by `setVisible(true)`, which the controller
+    // calls once the page has confirmed a question is being solved.
+    host.style.display = 'none';
     const root = host.attachShadow({ mode: 'open' });
 
     const style = document.createElement('style');
@@ -446,7 +451,7 @@ export class OverlayView {
 
     // The footer (last detector event + saved-record count) is diagnostics, so
     // it is only rendered in 开发者模式. The record count is still visible in the
-    // popup's 本地记录 card.
+    // popup's 历史记录 card.
     const eventEl = refs.foot.querySelector<HTMLElement>('[data-role="event"]');
     if (eventEl) eventEl.textContent = state.lastEvent;
     const recordsEl = refs.foot.querySelector<HTMLElement>('[data-role="records"]');

@@ -17,6 +17,7 @@
 import {
   OVERLAY_HOST_ID,
   QuestionDetector,
+  isPositionedQuestionKey,
   type DetectorDiagnostics,
   type ProgressStateChange,
 } from './question-detector.js';
@@ -780,6 +781,17 @@ export class ContentController {
       // came back (their timing was still stored, but under an attempt that was
       // no longer the current one).
       if (this.run.exerciseKey !== exerciseKeyFromUrl(location.href)) return;
+      // ... and only after a question was actually FINISHED here.
+      //
+      // The summary replaces the last question of the exercise, so the clock for
+      // it has already been stopped and its record is being held. A page that
+      // merely has no question on it - the "Ready to practice?" intro card, or a
+      // mid-transition frame - must never open the summary: that is how the card
+      // ended up rendered on top of an intro screen, showing 「暂无数据」.
+      const lastQuestionFinished =
+        this.pendingRecord !== null ||
+        (this.engine !== null && this.engine.getPhase() === 'finished');
+      if (!lastQuestionFinished) return;
       void this.enterSummary(now);
       return;
     }
@@ -788,6 +800,7 @@ export class ContentController {
         onSummary,
         questionFormPresent: document.querySelector('form[name="answerform"]') !== null,
         urlChanged: this.summaryUrl !== null && location.href !== this.summaryUrl,
+        startCardPresent: isStartCardPresent(document),
       });
       if (leave) this.leaveSummary();
       return;
@@ -1025,26 +1038,32 @@ export class ContentController {
   /**
    * Should the floating panel be on screen?
    *
-   * It tracks whether a question is actually being timed: the panel appears
-   * when one is detected and disappears when there is nothing to time. That
-   * keeps it off course pages, videos and any page whose structure is not
-   * recognised, instead of showing a clock that measures nothing.
+   * One question, one answer: is a question being SOLVED on the page in front of
+   * the learner right now? That is the only reason the panel exists, so every
+   * "no" hides it:
    *
-   * 识别：未识别 (no usable identity) also hides it, and additionally freezes
-   * the clock — see `pauseForMissingIdentity`. Showing a panel there would
-   * advertise a running clock for a question the extension cannot even name.
+   *  - the learner turned the overlay off (the master switch);
+   *  - there is no question being timed at all;
+   *  - there is one, but the page has not confirmed its position yet — an
+   *    exercise's start card holds the previous question's Perseus region before
+   *    the footer's progress marker arrives, and showing a clock over content
+   *    that is not a question is what made the panel flash on a practice start
+   *    page;
+   *  - 识别：未识别 (the page stopped offering an identity): a panel there would
+   *    advertise a clock for a question the extension cannot even name;
+   *  - the engine still belongs to the practice the learner just LEFT, whose
+   *    numbers have no meaning on the new page.
    *
-   * What must never happen is showing the PREVIOUS exercise's clock: between an
-   * SPA route change and the next detection the engine can still belong to the
-   * exercise the learner just left, and its numbers have no meaning on the new
-   * page.
+   * Deliberately a short, ordered list of conditions and no accumulated state:
+   * the panel is a pure function of "what is being timed on the page that is
+   * loaded", recomputed from scratch on every render.
    */
   private shouldShowPanel(): boolean {
-    if (!this.settings.overlayVisible) return false; // user's master switch
-    if (this.inSummary) return false; // nothing is being timed here
-    if (this.unidentified) return false; // 识别：未识别 — no question to show
+    if (!this.settings.overlayVisible) return false;
     const engine = this.engine;
     if (!engine) return false;
+    if (!isPositionedQuestionKey(engine.questionKey)) return false;
+    if (this.unidentified) return false;
     return engine.exerciseKey === exerciseKeyFromUrl(location.href);
   }
 

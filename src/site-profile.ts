@@ -411,9 +411,17 @@ export function shouldLeaveSummary(input: {
   onSummary: boolean;
   questionFormPresent: boolean;
   urlChanged: boolean;
+  /**
+   * The exercise's intro card is on screen ("Ready to practice?"). It is a
+   * POSITIVE signal that the learner is not looking at a summary any more, so
+   * the card has to go even though no question is on screen yet - otherwise a
+   * card injected a moment early would sit on top of the intro screen forever
+   * (observed on a real page: the card stayed above "Ready to practice?").
+   */
+  startCardPresent?: boolean;
 }): boolean {
   if (input.onSummary) return false;
-  return input.questionFormPresent || input.urlChanged;
+  return input.questionFormPresent || input.urlChanged || input.startCardPresent === true;
 }
 
 /**

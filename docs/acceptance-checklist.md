@@ -15,7 +15,7 @@
 
 ```bash
 pnpm install
-pnpm run verify          # 类型检查 + 单元测试(225) + 构建 + dist 产物检查(56)
+pnpm run verify          # 类型检查 + 单元测试(238) + 构建 + dist 产物检查(56)
 pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 ```
 
@@ -100,7 +100,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | **顺带修复的真实缺陷** | 题目区域被换掉再**原样**换回来时，进度标记没有变、新区域里也没有任何 mutation，检测器原本不会再评估一次，于是会永远停在「未识别」（面板一直不回来）。`QuestionDetector.onBodyMutation()` 现在在**重新绑定到区域的那一刻立即评估**，并新增回归用例 |
 | **可见提示的落点** | 面板隐藏，所以提示改由**扩展弹出面板**呈现：`未识别到题目：本题计时已暂停，重新识别到本题后自动继续`（`pausedForUnidentified` 字段） |
 | **单元测试** | `TimerEngine`：`an automatic pause freezes the clock without claiming the learner paused it`、`a learner pause still marks the question as paused`。检测器：`re-evaluates the moment the region comes back, with nothing else changing`。协调器（jsdom 端到端）：`hides the panel, freezes the clock and resumes the same question from the frozen value`、`never undoes a pause the learner asked for`、`keeps a question paused mid-way in the end-of-exercise summary`、`matches the manual verification recipe in the README (remove then restore the region)`（最后一条与 README 的手动验证步骤逐字对应） |
-| **端到端** | **未在真实 Edge 上驱动验证**：浏览器里无法可靠制造「题目区域消失、进度标记不动、随后同一道题原样回来」这一幕。证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑，仅 DOM 与 `chrome.storage` 为替身），见 `tests/controller.test.ts`。这一保留已记入 `docs/known-limitations.md` 第 23 条 |
+| **端到端** | **未在真实 Edge 上驱动验证**：浏览器里无法可靠制造「题目区域消失、进度标记不动、随后同一道题原样回来」这一幕。证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑，仅 DOM 与 `chrome.storage` 为替身），见 `tests/controller.test.ts`。这一保留已记入 `docs/known-limitations.md` 第 24 条 |
 
 ### 追加修正：正在计时的面板上残留「无法可靠识别当前题目」（用户报告）
 
@@ -159,7 +159,9 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 僵留的待写记录阻塞下一题 | 一旦漏检一次切题，上一题的待写记录会让下一题无法结算，整行丢失 | 索引不同则先落盘旧记录再结算新题 | 由端到端记录数验证 |
 | 切换练习丢掉进行中的计时 | 可汗学院是单页应用，换练习只换地址、不重新加载页面：旧练习的计时器没有被收掉，面板带着旧读数出现在新练习的「Ready to practice?」页并继续增长；如果新练习停在同一进度（都是「1 of N」），新题会被当成「题目没变」，旧练习那份进行中的会话随后被当成一次普通切题结算掉，回到旧练习时已累计用时归零、待写记录也没了 | 地址一变就作废旧题目身份（`syncUrl()`，且在 `evaluate()` 里而不只在轮询里，避免新页面的变更先于地址检查被提交）；只要页面已不属于当前练习就把本题**暂存**：冻结时钟、按 `session:<练习路径>` 保留可续接的会话、已答对/跳过的待写记录立刻落盘；面板只在当前练习的页面上显示 | `tests/controller.test.ts`（3 例，jsdom + 内存版 `chrome.storage.local`）、`treats an SPA move to another exercise as a new question, not a continuation`、`tests/storage.test.ts` 的会话冻结用例 |
 | 结束页把题号排错 / 缺数据的题被顶上来 | 卡片按**记录落盘的先后顺位**编号（`position + 1`），并且只按 `runId` 取数。于是：切换练习回来、（或某题根本没计到）时，第 3 题的用时会被印成「第 2 题」，缺数据的那一题直接消失；记录的题号本身也可能是错的——切题是页面**已经前进之后**才被处理的，晚读进度标记会把新题的索引写进上一题的记录 | 题目在**开始计时的那一刻**就把「练习路由 + 第几题 + 本地题目指纹」绑定进记录（`beginQuestion` 绑定，`learnQuestionPosition()` 只在读不到时补，且只对同一道题补）；卡片取数先按练习路由（`exerciseKey`）再收到本轮（`attemptRecordsFor`），行序由纯函数 `buildSummaryRows` 按**题号**生成，**没有数据的题号保留题号并标注「数据缺失」**，同一题的多段用时相加，加试题排在编号题目之后 | `tests/controller.test.ts`「the card of a practice resumed after a switch」3 例（含缺数据题号与题号绑定两条，打回旧逻辑分别会得到 2 行与错位的题号）、`tests/summary-view.test.ts` 的 `buildSummaryRows` 6 例、`tests/storage.test.ts` 的 `attemptRecordsFor` 4 例 |
+| 用时卡片出现在介绍页上 | 注入只看结构判据（无答题表单 + 无进度点 + 有练习外壳），练习 A 的介绍页与切换过渡帧都满足它，于是「本轮每题用时」出现在「Ready to practice?」上并显示「暂无数据」 | 三条正向绑定：① 必须「刚做完一道题」（有待写记录或引擎已 finished）才进入结束页；② 当前地址必须仍属于本轮记录所属的练习；③ 出现介绍卡片即撤掉卡片 | `tests/controller.test.ts`「the card is bound to the end-of-exercise screen」（旧逻辑下第一条报 `expected 4 to be 0`）、`tests/question-detector.test.ts`「leaves when the intro card comes up」 |
 | 切换练习时旧练习被误判为结束页 | 应用内切到另一个练习时，旧练习先被拆掉；那一帧「无答题表单 + 无进度点 + 有练习外壳」与结束页判据完全一致（只有地址已变）。扩展据此给旧练习结束本轮并清掉 run，回到旧练习等于开新一轮 —— 于是结束页只剩切换之后的题，切换前那几题显示成「数据缺失」 | 进入结束页的条件加上「当前地址仍属于本轮记录所属的练习」（`run.exerciseKey === exerciseKeyFromUrl(location.href)`） | `tests/controller.test.ts`「moving to another practice inside the app」；真机：修复前卡片 `第1题数据缺失 / 第2题数据缺失 / 第3题0:05 / 第4题0:06`，修复后 `第1题0:09 / 第2题0:07 / 第3题0:04 / 第4题0:14，共 4 题 · 合计 0:36` |
+| 计时面板在练习起始页闪一下再关闭 | 两条叠加：① 面板宿主 `#khan-academy-timer-host` 挂载时没有 `display`（内容已渲染），到第一次 `render()` 之前真的会画出来；② 练习起始页/过渡帧里往往还留着上一题的 Perseus 框架而进度标记尚未渲染，检测器据此按指纹建了引擎开始计时，于是面板有内容可显示 —— 等残留区域被清掉又变成「未识别」，面板才收起，这就是那次闪烁 | ① `OverlayView.mount()` 直接设宿主 `display:none`，面板只在控制器判定「确实在做题」时打开；② 显示判据简化为「引擎存在 + 题目身份带**位置**（`isPositionedQuestionKey`）+ 非未识别 + 引擎属于当前练习」，指纹身份不再算「在做题」（计时照跑，位置一到即显示已累计读数） | `tests/controller.test.ts`「the panel appears only over a question being solved」3 例（旧逻辑下报 `expected undefined to be 'none'` 与 `expected true to be false`）、`tests/question-detector.test.ts`「isPositionedQuestionKey」4 例；jsdom 逐段断言「任意时刻面板是否可见」，见已知限制第 30 条 |
 
 ---
 
@@ -195,7 +197,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
 | 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
 | 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 225 用例）；运行说明见 `README.md` → 测试与验证 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 238 用例）；运行说明见 `README.md` → 测试与验证 |
 | 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
 | 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（23 条，含未满足的验收项、切换练习的边界条件与「识别：未识别」的验证保留） |
 
@@ -234,7 +236,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 225 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 238 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档
