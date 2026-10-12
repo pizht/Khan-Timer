@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hardened headless Microsoft Edge capture, used for the compatibility research.
+# Hardened headless Microsoft Edge capture, used while researching page structure.
 #
 # Why this is not a one-liner:
 #

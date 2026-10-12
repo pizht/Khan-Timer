@@ -53,9 +53,11 @@ several of them are counter-intuitive — see the regression block in
 `tests/question-detector.test.ts`.
 
 If a page type has not been observed, the correct outcome is to leave it
-**unverified** (the extension degrades honestly and says it did not recognise
-the question) — not to add a speculative selector. `docs/compatibility.md`
-records what is actually verified, in tiers.
+**unverified** — the extension degrades honestly and says it did not recognise
+the question rather than guessing. There is deliberately no maintained
+"supported page types" list to keep in sync: the honest signal is the runtime
+behaviour plus the `[OBS]` / `[VER]` / `[STD]` provenance markers that every
+selector in `src/site-profile.ts` carries.
 
 ### How to get real DOM
 
@@ -124,8 +126,7 @@ assertion is stale" (fix the assertion) before changing either.
 | `scripts/capture/` | Live-site capture + sanitisation tools. |
 | `public/` | `manifest.json`, popup, `_locales/`, generated icons. |
 | `assets/logo.png` | Source art for `pnpm run icons`. |
-| `docs/` | Compatibility tiers, known limitations, i18n, acceptance record. |
-| `docs/research/` | Page-type tiers, live-site observations, capture methodology. |
+| `docs/` | User guide and i18n notes. |
 | `.github/workflows/` | `verify.yml` (offline gate), `e2e.yml` (manual), `release.yml`. |
 
 ## Caveats to keep in mind
@@ -136,15 +137,17 @@ assertion is stale" (fix the assertion) before changing either.
   that still looks authoritative is worse than no snapshot. Re-capture instead
   (see "How to get real DOM" above) — that path is reproducible, and was
   verified byte-identical across captures taken days apart.
-- `docs/research/` holds the **analysis** derived from live observation
-  (page-type tiers, behaviour notes, why a selector was chosen). Analysis is
-  not recoverable by re-capturing, which is why it *is* versioned. Capture dates
-  are recorded inside each file; treat anything un-dated as historical.
+- **Nor does it version a separate "research" archive.** The design conclusions
+  drawn from those captures live where they are actually used: as comments in
+  `src/site-profile.ts` (every selector marked `[OBS]` / `[VER]` / `[STD]`) and
+  as named regression tests in `tests/`. If you need the provenance of a
+  selector, read the code; if you need to re-derive it, re-capture.
 - Some of the `scripts/capture/cdp-*.mjs` scripts are one-off investigation
   probes rather than polished tools; the maintained verification path is
   `scripts/verify-*.mjs`.
-- The original requirements document cited by some docs as "需求文档第 N 节" is
-  **no longer in this repository**. Treat those citations as historical
-  context, not as a live contract.
-- `docs/known-limitations.md` is the honest list of what is unverified or
-  deliberately unsupported. Read it before promising a behaviour works.
+- The original requirements document cited by older docs as "需求文档第 N 节" is
+  **no longer in this repository**, and neither are the files that cited it.
+  Treat any surviving mention as historical context.
+- There is no maintained list of "known limitations". The authoritative
+  statements are the runtime degradation behaviour (visible in the panel) and
+  the assertions in `tests/`.

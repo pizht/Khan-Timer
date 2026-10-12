@@ -6,9 +6,9 @@
  *  1. `QuestionChangeDecider` — the pure decision logic, tested directly with
  *     synthetic snapshots.
  *  2. `QuestionDetector` — the DOM adapter, driven against a synthetic DOM that
- *     mirrors the structure actually observed on Khan Academy
- *     (see docs/research/observations.md; re-capture the live DOM yourself with
- *     scripts/capture/ before changing any selector — see AGENTS.md).
+ *     mirrors the structure actually observed on Khan Academy. Before changing
+ *     any selector, re-capture the live DOM with scripts/capture/ — see
+ *     AGENTS.md. Never infer a selector.
  *
  * The regression block near the end encodes the two most important empirical
  * findings from live observation. Both are cases where a naive implementation

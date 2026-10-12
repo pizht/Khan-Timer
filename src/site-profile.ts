@@ -8,7 +8,7 @@
  * Every entry below is marked with how it was established:
  *
  *   [OBS] observed in real DOM captured from khanacademy.org with headless
- *         Edge (see docs/research/collection-report.md for URLs and method).
+ *         Edge (re-capture it yourself with scripts/capture/ — see AGENTS.md).
  *   [VER] verified by driving the live page over the DevTools Protocol and
  *         comparing behaviour before/after an interaction.
  *   [STD] a platform-standard hook (ARIA role, element semantics) rather than
@@ -71,10 +71,10 @@ export const QUESTION_STEM: SelectorStrategy[] = [
  * Subtrees removed from the region before it is fingerprinted.
  *
  * These are [STD] platform hooks, plus the observed feedback container. The
- * empirical reason this matters is recorded in docs/research/observations.md:
- * opening hints grew the region's text from ~3.5 KB to ~23 KB, so a naive
- * text fingerprint would report a question change every time a learner asked
- * for help.
+ * empirical reason this matters: opening hints grew the region's text from
+ * ~3.5 KB to ~23 KB, so a naive text fingerprint would report a question change
+ * every time a learner asked for help. Locked in by the regression test
+ * "hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change".
  */
 export const FEEDBACK_SUBTREES: string[] = [
   '[role="dialog"]', // [OBS] feedback popovers ("Not quite yet...", "There you go!")
@@ -448,7 +448,7 @@ export const SUMMARY_HOST: SummaryHostStrategy[] = [
     // built from zero-height flex items whose content is absolutely positioned,
     // so almost every in-flow position paints over the results. Each candidate
     // was injected with a card-sized probe and the overlap with the exercise
-    // panel's OWN text was counted (see docs/research/observations.md §10.7):
+    // panel's OWN text was counted:
     //
     //   before exercise-chrome-content      0 overlaps   (visible, y 503..713)
     //   append to exercise-chrome-content   0 overlaps   (below the fold)

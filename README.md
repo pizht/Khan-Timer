@@ -80,7 +80,8 @@ EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 ## 架构与不变量
 
 下面这些行为是在真实页面上实测得到、并被单元测试锁定的。**改识别、计时或存储前先读对应测试**，
-否则很容易把已修好的缺陷改回来。完整的实测证据在 [`docs/research/observations.md`](docs/research/observations.md)。
+否则很容易把已修好的缺陷改回来。每条的「为什么」都写在对应源码注释里，改选择器前请先按
+[`AGENTS.md`](AGENTS.md) 自己抓一份真实 DOM。
 
 | 不变量 | 说明 | 主要位置 |
 |---|---|---|
@@ -100,9 +101,9 @@ EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 去抖与冷却的默认值（可在设置里覆盖，弹窗不暴露）：新身份需连续稳定
 **400 ms**、且距上次已接受的切换 **≥ 1200 ms**；候选出现后会安排一次延后复核。
 
-识别细节的实测结论（题目区域选择器、提示展开不重置计时、`Start over` 视为新题等）
-见 [`docs/research/observations.md`](docs/research/observations.md) 与
-[`docs/research/page-inventory.md`](docs/research/page-inventory.md)。
+识别细节的设计依据（题目区域选择器、提示展开不重置计时、`Start over` 视为新题等）
+以源码注释为准：`src/site-profile.ts` 里每条选择器都标了它是怎么确立的
+（`[OBS]` 实采观察 / `[VER]` 真机驱动验证 / `[STD]` 平台标准钩子）。
 
 ---
 
@@ -127,15 +128,16 @@ scripts/                   # build + 图标生成 + 四层验证脚本
 scripts/capture/           # 真实站点抓 DOM / 脱敏（AI agent 与维护者用，见 AGENTS.md）
 tests/                     # vitest（8 个文件）
 docs/                      # 面向维护者与用户的说明文档
-docs/research/             # 页面类型分级、实测观察记录、采集方法（分析，不含 DOM 数据）
 assets/logo.png            # 图标原图，pnpm run icons 由它生成 public/icons/
 ```
 
 抓取到的 DOM 数据（原始抓取、脱敏摘录、截图）**刻意不进版本库**，一律落在
 `.gitignore` 忽略的 `.tmp-caps/`：它们会随可汗学院改版立即过期，而一份看起来仍权威的
 过期样本比没有样本更危险。需要时按 [`AGENTS.md`](AGENTS.md) 里的两条命令重新采集即可
-（该路径可复现：实测相隔数天的两次采集字节完全一致）。`docs/research/` 保留的是**分析
-结论**——那部分无法靠重新采集得到，所以入库。
+（该路径可复现：实测相隔数天的两次采集字节完全一致）。采集得到的设计结论不单独存档，
+而是直接写在源码注释里——`src/site-profile.ts` 每条选择器都标了来源等级，读代码即可看到
+「为什么」。同理，**未验证的页面类型不单独维护清单**：扩展遇到不认识的页面会明确说
+「未识别」并暂停计时，行为本身就是声明。
 
 `site-profile.ts` 集中全部站点选择器与适配规则：站点改版时只改这一处，不要在选择器散落到
 各模块；`dist/` 是纯构建产物，`.gitignore` 忽略。
@@ -153,8 +155,9 @@ assets/logo.png            # 图标原图，pnpm run icons 由它生成 public/i
 | 产物检查 | `node scripts/verify-dist.mjs` | **61 项** | manifest 可解析且引用文件存在、权限允许清单、内容脚本匹配范围、`dist/*.js` 无网络/动态执行代码、图标尺寸、`_locales` 与 `__MSG_*` 可解析 |
 | 真实浏览器 | `pnpm run verify:edge`、`verify:startcard`、`verify:practice-switch` | 端到端 | 把 `dist/` 作为解压扩展加载进真实 Edge，经 CDP 读面板 Shadow DOM 与 `chrome.storage.local` |
 
-手动步骤（真实浏览器无法稳定制造的场景，例如「识别失败 → 暂停 → 恢复」）在
-[`docs/manual-verification.md`](docs/manual-verification.md)。
+真实浏览器里难以稳定制造的场景（例如「识别失败 → 暂停 → 恢复」）已尽可能改写成 jsdom
+端到端用例，见 `tests/controller.test.ts` 的 *pauses instead of resetting when the question
+region disappears and comes back*；剩下的手动步骤在上面三条 `verify:*` 命令的输出里按提示操作。
 
 工作流：
 
@@ -200,13 +203,9 @@ assets/logo.png            # 图标原图，pnpm run icons 由它生成 public/i
 | 文档 | 读者 | 内容 |
 |---|---|---|
 | [`docs/user-guide.md`](docs/user-guide.md) | **用户** | 从 Release 下载 ZIP 并导入 Chrome / Edge、使用、设置、隐私、疑难解答（English 默认 + 简体中文） |
-| [`docs/compatibility.md`](docs/compatibility.md) | 维护者 | 已验证的页面类型清单与人工测试结果（含测试所用浏览器版本） |
-| [`docs/known-limitations.md`](docs/known-limitations.md) | 维护者 | 已知限制逐条说明：是什么、为什么、影响、应对 |
 | [`docs/i18n.md`](docs/i18n.md) | 维护者 | 多语言方案、语言解析、**新增一种语言的步骤** |
-| [`docs/manual-verification.md`](docs/manual-verification.md) | 维护者 | 只能在真实浏览器里手动走的验证步骤（DevTools 片段） |
-| [`docs/acceptance-checklist.md`](docs/acceptance-checklist.md) | 维护者 | 需求验收标准逐条对照与证据 |
-| [`docs/research/`](docs/research/) | 维护者 | 页面类型分级、实测观察、采集方法（**分析**；DOM 数据按需重采） |
 | [`AGENTS.md`](AGENTS.md) | AI agent / 维护者 | 改选择器前必读：如何自己抓到真实 DOM，而不是反推 |
+| 本文件 | 维护者 | 架构与不变量、验证与 CI、项目结构、权限、识别原理、故障排查 |
 
 ---
 
