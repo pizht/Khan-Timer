@@ -126,7 +126,9 @@ assertion is stale" (fix the assertion) before changing either.
 | `scripts/capture/` | Live-site capture + sanitisation tools. |
 | `public/` | `manifest.json`, popup, `_locales/`, generated icons. |
 | `assets/logo.png` | Source art for `pnpm run icons`. |
-| `docs/` | User guide and i18n notes. |
+| `README.md` | The **user** guide (install from the release ZIP, settings, privacy, FAQ). Bilingual, English first. |
+| `docs/development.md` | The **developer** guide: architecture and invariants, commands, verification layers, release process, permissions, troubleshooting. |
+| `docs/i18n.md` | i18n design notes and how to add another language. |
 | `.github/workflows/` | `verify.yml` (offline gate), `e2e.yml` (manual), `release.yml`. |
 
 ## Caveats to keep in mind
