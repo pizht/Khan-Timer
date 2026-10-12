@@ -161,6 +161,8 @@ export const zhCN: Record<MessageKey, string> = {
   'popup.recordFirstCorrect': '首次答对',
   'popup.recordSubmitted': '已提交',
   'popup.recordPartial': '未完成',
+  'popup.recordPosition': '{number}/{total} 题',
+  'popup.recordPositionOnly': '第 {number} 题',
   'popup.shortKeyId': 'ID {key}',
   'popup.shortKeyFingerprint': '指纹 {key}',
   'popup.cleared': '记录已清除',

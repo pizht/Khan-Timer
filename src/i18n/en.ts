@@ -171,6 +171,10 @@ export const en = {
   'popup.recordFirstCorrect': 'First try correct',
   'popup.recordSubmitted': 'Submitted',
   'popup.recordPartial': 'Unfinished',
+  /** Which question of the exercise a history row is about. */
+  'popup.recordPosition': 'Q{number}/{total}',
+  /** ...when the page never reported how many questions the exercise has. */
+  'popup.recordPositionOnly': 'Q{number}',
   'popup.shortKeyId': 'ID {key}',
   'popup.shortKeyFingerprint': 'FP {key}',
   'popup.cleared': 'Records cleared',

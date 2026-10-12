@@ -246,12 +246,50 @@ async function paintRecords(): Promise<void> {
       );
     }
     if (record.status === 'partial') bits.push(t('popup.recordPartial'));
-    bits.push(shortKey(record.questionKey));
+    bits.push(recordPosition(record));
     right.textContent = bits.join(' · ');
 
     li.append(left, right);
     list.append(li);
   }
+}
+
+/**
+ * Which question of its exercise a record is about — the tail of a history row.
+ *
+ * The record's own position fields come first: they are bound while the question
+ * is on screen, so they are the same numbers `summary-view.ts` numbers the
+ * end-of-exercise rows with. A record written before those fields existed (or one
+ * whose marker was not readable when it started) carries neither, and then the
+ * identity key is read instead: a progress marker states the position itself.
+ *
+ * Only an opaque identity falls through to `shortKey` — a hash or a fingerprint
+ * does not say which question it was, so it is shown shortened.
+ */
+function recordPosition(record: QuestionRecord): string {
+  const position = positionOf(record);
+  if (position === null) return shortKey(record.questionKey);
+  return position.total === null
+    ? t('popup.recordPositionOnly', { number: position.number })
+    : t('popup.recordPosition', { number: position.number, total: position.total });
+}
+
+/** 1-based question number and exercise size, when the record knows them. */
+function positionOf(record: QuestionRecord): { number: number; total: number | null } | null {
+  if (record.questionIndex !== null) {
+    return { number: record.questionIndex + 1, total: record.questionTotal };
+  }
+  // The identity of a question keyed by the page's own progress marker:
+  // `id:progress:<n> of <m>`, or `id:progress:#<n>` — the second shape is what
+  // `progressLabel` produces when it has no total. Today's `readProgress` always
+  // reports one (the total is the marker's cell count), so `#<n>` is tolerated
+  // rather than expected: the label format allows it, and a key is data that may
+  // have been written by an older build.
+  const match = /^id:progress:(?:(\d+) of (\d+)|#(\d+))$/.exec(record.questionKey);
+  if (!match) return null;
+  const number = Number(match[1] ?? match[3]);
+  if (!Number.isFinite(number)) return null;
+  return { number, total: match[2] === undefined ? null : Number(match[2]) };
 }
 
 function shortKey(key: string): string {

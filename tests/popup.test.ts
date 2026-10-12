@@ -36,7 +36,7 @@ let store: Store;
 let failWrite: boolean;
 let failRemove: boolean;
 
-function makeRecord(): QuestionRecord {
+function makeRecord(overrides: Partial<QuestionRecord> = {}): QuestionRecord {
   const now = Date.now();
   return {
     id: 'r_1',
@@ -58,6 +58,7 @@ function makeRecord(): QuestionRecord {
     runId: 'run_1',
     questionIndex: 1,
     questionTotal: 4,
+    ...overrides,
   };
 }
 
@@ -230,6 +231,37 @@ describe('popup records section', () => {
     expect(isVisible(hint('save-hint'))).toBe(true);
     expect(cardOf('save-hint')?.querySelector('h2')?.textContent).toBe(t('popup.settingsHeading'));
     expect(hint('records-hint').hidden).toBe(true);
+  });
+
+  it('ends each history row with the question it is about, not a chopped identity', async () => {
+    // Oldest first in storage; the list renders newest first.
+    store = {
+      records: {
+        version: 1,
+        records: [
+          makeRecord({ id: 'r_hash', questionKey: 'id:abc1234567890xyz', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_legacy_short', questionKey: 'id:progress:#2', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_legacy', questionKey: 'id:progress:4 of 7', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_no_total', questionIndex: 0, questionTotal: null }),
+          makeRecord({ id: 'r_positioned', questionIndex: 3, questionTotal: 10 }),
+        ],
+      },
+    };
+    await bootPopup();
+
+    const tails = [...document.querySelectorAll('#recent .r-meta')].map((node) =>
+      (node.textContent ?? '').split(' · ').at(-1),
+    );
+    expect(tails).toEqual([
+      t('popup.recordPosition', { number: 4, total: 10 }),
+      t('popup.recordPositionOnly', { number: 1 }),
+      t('popup.recordPosition', { number: 4, total: 7 }),
+      t('popup.recordPositionOnly', { number: 2 }),
+      t('popup.shortKeyId', { key: 'abc123456789' }),
+    ]);
+    // The bug this replaces: a blind 12-character slice of `progress:4 of 10`
+    // rendered every single-digit question as "…progress:4 o".
+    expect(tails.join(' ')).not.toContain('progress:');
   });
 });
 
