@@ -18,14 +18,17 @@
 #   capture-dom.sh dom   <name> <url> [old|new] [virtualTimeBudgetMs]
 #   capture-dom.sh shot  <name> <url> [old|new] [virtualTimeBudgetMs]
 #
-# Output lands in references/.tmp-caps/ (scratch; not part of the deliverable).
+# Output lands in .tmp-caps/ at the repo root (scratch; not part of the
+# deliverable, gitignored).
 # For `dom` the DOM is written to <name>.html; for `shot` a PNG to <name>.png.
 # stderr is always captured to <name>.(html|log).err for diagnosis.
 
 set -u
 
-BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EDGE="${EDGE_BIN:-/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge}"
+BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# EDGE_PATH matches the rest of the repo (see scripts/lib/browser.mjs); EDGE_BIN
+# is the historical name used by the other capture tools, kept working.
+EDGE="${EDGE_PATH:-${EDGE_BIN:-/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge}}"
 OUTDIR="$BASE/.tmp-caps"
 mkdir -p "$OUTDIR"
 

@@ -1,5 +1,10 @@
 # Khan Academy Timer — 页面结构采集报告
 
+> **时效声明：** 本文件是 2025-10-09 的历史采集记录，描述的是当时的页面结构。
+> 可汗学院改版后它可能不再准确，**不要把它当作现状**。DOM 数据本身不随仓库分发，
+> 需要时按 [`AGENTS.md`](../../AGENTS.md) 重新采集；选择器的当前真源始终是
+> `src/site-profile.ts`。
+
 - **采集日期：** 2025-10-09
 - **采集者：** 实现者（自动化采集，无人工登录操作）
 - **目标浏览器：** Microsoft Edge 154.0.4258.62（Chromium，macOS arm64）
@@ -49,7 +54,7 @@ FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:436] GPU process isn'
 原因是 Chromium 自身的沙箱无法在 DSH 沙箱内初始化，且 Crashpad 无法写入
 `~/Library/Application Support/Microsoft Edge/Crashpad/`。
 
-**可用参数组合**（已固化在 `references/tools/capture-dom.sh`）：
+**可用参数组合**（已固化在 `scripts/capture/capture-dom.sh`）：
 
 ```
 --headless=old|new --no-sandbox --disable-gpu --disable-dev-shm-usage \
@@ -65,7 +70,7 @@ FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:436] GPU process isn'
 
 ### 1.4 采集脚本
 
-保留在 `references/tools/`，可复现：
+保留在 `scripts/capture/`，可复现：
 
 | 文件 | 用途 |
 |---|---|
@@ -247,7 +252,7 @@ data-question-id  data-item-id  data-problem-id  data-perseus-id  data-question
 - **543 处 `kaid`**（Khan Academy 的实验分桶哈希）
 - 其他 `*_id` / 用户名 / 邮箱形态字段（扫描确认邮箱与 token 均为 0）
 
-`references/tools/sanitize-snapshots.py` 只提取三块局部结构
+`scripts/capture/sanitize-snapshots.py` 只提取三块局部结构
 （题目区域 / 页脚 / 反馈浮层），并：
 
 - 删除全部 `script` / `style` / `noscript` / `iframe`

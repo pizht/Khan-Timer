@@ -1011,7 +1011,7 @@ export class ContentController {
        * 识别：未识别, and whether this question's clock was frozen by the
        * extension because of it. Both are readable from the page even while
        * the panel itself is hidden, which is what makes the behaviour
-       * verifiable in a real browser (see README → 手动验证).
+       * verifiable in a real browser (see docs/manual-verification.md).
        */
       unidentified: this.unidentified,
       autoPausedForIdentity: this.autoPausedForIdentity,

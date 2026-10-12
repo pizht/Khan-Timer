@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Repo root is two levels up from references/tools/. */
+/** Repo root is two levels up from scripts/capture/. */
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DIST = path.join(ROOT, 'dist');
 const EDGE = process.env.EDGE_BIN

@@ -85,7 +85,7 @@
 | # | 要求 | 实现与验证 |
 |---|---|---|
 | 1 | 不要显示模式栏 | 表格改为**两列**（题目、用时）。端到端断言表头恰为 `['题目','用时']`、每行恰有 2 个单元格、且卡片内不出现「正计时/倒计时」字样。超时仍由「超时」标记表达。 |
-| 2 | 不应覆盖网页原有内容 | 卡片改为插在**练习内容区之前**，把原有内容向下推。在真实结束页上测量卡片与练习面板自身文本的重叠：**0 处**（改动前为 192 处，包含「Exercise complete!」「4/4 correct」「Want to save your progress?」「Try again」「Up next」）。选取依据是 11 个候选位置的实测对比，见 `references/observations.md` §10.7。 |
+| 2 | 不应覆盖网页原有内容 | 卡片改为插在**练习内容区之前**，把原有内容向下推。在真实结束页上测量卡片与练习面板自身文本的重叠：**0 处**（改动前为 192 处，包含「Exercise complete!」「4/4 correct」「Want to save your progress?」「Try again」「Up next」）。选取依据是 11 个候选位置的实测对比，见 `docs/research/observations.md` §10.7。 |
 
 补充：卡片高度也从被拉伸的 625px 回到自然高度 255px —— 原因是 `flex-grow: 1`
 在 column flex 容器里会把卡片撑满容器高度。
@@ -269,7 +269,7 @@ identified again`）。
 
 实现符合该要求：
 
-> 截图 `references/screenshots/overlay-degraded-unrecognised.png` 是**历史截图**：
+> 该状态的历史截图已随 `references/` 一并删除（它反映的是旧「保持计时」行为，早已不适用）：
 > 它拍摄于旧的「保持计时不变」行为下（面板仍显示 `识别：未识别` 与
 > `计时保持不变，可用"重置本题"手动开始。`）。当前行为已改为下面列出的
 > 「隐藏面板 + 暂停计时」，该截图仅作对照，不再代表当前界面。
@@ -290,8 +290,8 @@ identified again`）。
 | 等级 | 本项目对应的具体对象 | 凭据 |
 |---|---|---|
 | `Edge-verified` | 练习页 `addition_4`：面板注入、正计时自动开始、暂停/继续/重置、**答对即停表**、**确认跳过即停表**、**提示展开不重置计时**、切题结算并保存记录、**结束页「本轮每题用时」**、倒计时超时状态、弹出面板读写存储、清除记录 | `scripts/verify-extension.mjs` 输出，67/67 |
-| `Automated-tested` | 练习页 `addition_4`：进度索引 0→1→2→3、答题前后区域文本一致、反馈浮层位置、提示展开导致区域文本 3.5 KB→23 KB 而索引不变 | `references/observations.md` 第 1、2、3 节 |
-| `Observed` | 练习 `rounding-to-the-nearest-ten-or-hundred`、测验 `quiz-1` 的首屏 DOM | `references/collection-report.md` 第 2 节、`references/snapshots/` |
+| `Automated-tested` | 练习页 `addition_4`：进度索引 0→1→2→3、答题前后区域文本一致、反馈浮层位置、提示展开导致区域文本 3.5 KB→23 KB 而索引不变 | `docs/research/observations.md` 第 1、2、3 节 |
+| `Observed` | 练习 `rounding-to-the-nearest-ten-or-hundred`、测验 `quiz-1` 的首屏 DOM | `docs/research/collection-report.md` 第 2 节（样本本身按 `AGENTS.md` 重采） |
 | `Unverified` | 本文件第二、三节列出的全部内容 | — |
 
 ---

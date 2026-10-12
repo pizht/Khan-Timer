@@ -8,9 +8,8 @@
 - `collection-report.md` —— 方法、页面、访问限制
 - `observations.md` —— 交互行为观察（切题 / 反馈 / 提示 / 输入 / 跳过）
 - `page-inventory.md` —— 页面类型与验证分级
-- `snapshots/` —— 脱敏后的局部 DOM 与 testid 清单
-- `screenshots/` —— 关键状态截图
-- `tools/` —— 可复现的采集与脱敏脚本
+
+采集脚本在 `scripts/capture/`；采集产物（DOM 摘录、截图）不入库，见第 7 节。
 
 ---
 
@@ -85,7 +84,7 @@ FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:436] GPU process isn'
 ### 2.3 一次典型的静态抓取
 
 ```bash
-references/tools/capture-dom.sh dom exercise-addition_4 \
+scripts/capture/capture-dom.sh dom exercise-addition_4 \
   "https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtraction/imp-adding-with-regrouping-within-1000/e/addition_4" \
   old 25000
 # → dom exercise-addition_4 mode=old exit=137 bytes=566066
@@ -108,7 +107,7 @@ grep -oE 'href="/[^"]*/(e|quiz|test)/[^"]*"' page.html | sort -u
 静态 DOM 只能看到首屏。为了观察「答题 → 反馈 → 切题」，写了一个基于 CDP 的驱动器：
 
 ```bash
-node references/tools/cdp-probe.mjs <exerciseUrl> <outDir>
+node scripts/capture/cdp-probe.mjs <exerciseUrl> <outDir>
 ```
 
 它做的事情：
@@ -232,47 +231,46 @@ Skip → "Yes, skip" 后，同一题（索引 0）的进度 testid 与区域文�
 
 ---
 
-## 7. `references/` 目录结构
+## 7. 采集资料现在放在哪里
+
+**本目录（`docs/research/`）只保留分析结论，不保留 DOM 数据。** 抓取到的原始 DOM、
+脱敏摘录与截图会随站点改版立即过期，而且一份看起来仍权威的过期样本比没有样本更危险，
+所以它们一律写入 `.gitignore` 忽略的 `.tmp-caps/`，需要时按 [`AGENTS.md`](../../AGENTS.md)
+的两条命令重新采集：
+
+```bash
+scripts/capture/capture-dom.sh dom <名称> <URL> new 25000   # -> .tmp-caps/<名称>.html
+python3 scripts/capture/sanitize-snapshots.py .tmp-caps/<名称>.html .tmp-caps/out <标签>
+```
+
+这套采集路径是可复现的：相隔数天的两次采集，`question-region`（5727 B）与
+`exercise-footer`（2229 B）摘录字节完全一致。
 
 ```
-references/
-├── collection-report.md          # 采集方法与访问限制
-├── observations.md               # 交互行为观察
-├── page-inventory.md             # 页面类型与验证分级
-├── research-notes.md             # 本文件
-├── screenshots/
-│   ├── overlay-countup.png                 # 面板在真实练习页上正计时
-│   ├── overlay-countdown-expired.png       # 倒计时归零的超时状态（面板变红）
-│   ├── overlay-collapsed.png               # 折叠为小胶囊
-│   ├── overlay-degraded-unrecognised.png   # 识别不确定时的保守降级（历史：旧「保持计时」行为；现行为为隐藏面板 + 暂停计时）
-│   ├── summary-per-question-times.png      # 结束页的「本轮每题用时」卡片
-│   └── popup-settings.png                  # 扩展弹出面板
-├── snapshots/
-│   ├── exercise-initial-question-region.html
-│   ├── exercise-initial-exercise-footer.html
-│   ├── exercise-after-wrong-answer-question-region.html
-│   ├── exercise-after-wrong-answer-exercise-footer.html
-│   ├── exercise-after-wrong-answer-feedback-dialog.html
-│   ├── exercise-after-correct-answer-question-region.html
-│   ├── exercise-after-correct-answer-exercise-footer.html
-│   ├── exercise-after-correct-answer-feedback-dialog.html
-│   ├── summary-screen-summary-screen.html   # 结束页卡片（height:0 的那个）
-│   ├── summary-screen-exercise-footer.html
-│   └── exercise-page-testids.md
-└── tools/
-    ├── capture-dom.sh                # 真实 Edge 抓 DOM / 截图
-    ├── cdp-probe.mjs                 # 通过 CDP 驱动真实交互并对比前后 DOM
-    ├── cdp-extension-diagnostics.mjs # 加载扩展后读出检测器诊断（排查「面板卡住」）
-    ├── sanitize-snapshots.py         # 从原始抓取提取脱敏局部样本
-    ├── capture-with-extension.mjs    # 加载扩展后截图（悬浮面板 / 弹出面板）
-    ├── capture-summary.mjs           # 做完整套题并在结束页截图「本轮每题用时」
-    └── cdp-page-check.mjs            # 判定某个页面类型是否被现有选择器识别
+docs/research/                      # 分析（入库）
+├── collection-report.md            # 采集方法与访问限制
+├── observations.md                 # 交互行为观察
+├── page-inventory.md               # 页面类型与验证分级
+└── research-notes.md               # 本文件
+
+scripts/capture/                    # 方法（入库）
+├── capture-dom.sh                  # 真实 Edge 抓 DOM / 截图
+├── sanitize-snapshots.py           # 从原始抓取提取脱敏局部样本
+├── cdp-probe.mjs                   # 通过 CDP 驱动真实交互并对比前后 DOM
+├── cdp-extension-diagnostics.mjs   # 加载扩展后读出检测器诊断（排查「面板卡住」）
+├── capture-with-extension.mjs      # 加载扩展后截图（悬浮面板 / 弹出面板）
+├── capture-summary.mjs             # 做完整套题并在结束页截图「本轮每题用时」
+└── cdp-page-check.mjs              # 判定某个页面类型是否被现有选择器识别
 ```
+
+> 此前入库的 `references/snapshots/`、`references/screenshots/` 与
+> `references/.tmp-summary-card-redesign/` 已删除：前者可由上面的命令重建，后两者是
+> 扩展自身 UI 的历史截图，已不反映当前界面。
 
 ### 2.8 判定一个新页面类型是否受支持
 
 ```bash
-node references/tools/cdp-page-check.mjs <outDir> <url> [url...]
+node scripts/capture/cdp-page-check.mjs <outDir> <url> [url...]
 ```
 
 它加载真实页面，报告 `src/site-profile.ts` 里每条策略的命中情况，并且在发现
@@ -283,7 +281,7 @@ node references/tools/cdp-page-check.mjs <outDir> <url> [url...]
 ### 2.7 驱动整套练习到结束页
 
 ```bash
-node references/tools/capture-summary.mjs <exerciseUrl> <outDir>
+node scripts/capture/capture-summary.mjs <exerciseUrl> <outDir>
 ```
 
 这条命令会自动解出每一题、确认页面判定为「正确」、逐题前进，直到 `Show summary`，
@@ -300,7 +298,7 @@ node references/tools/capture-summary.mjs <exerciseUrl> <outDir>
 > ./tools/capture-dom.sh shot <名称> <URL> [old|new] [虚拟时间预算ms]
 > ```
 >
-> 产物写入 `references/.tmp-caps/`（该目录为临时目录，不随交付物保留）。
+> 产物写入 `.tmp-caps/`（该目录为临时目录，不随交付物保留）。
 
 ---
 

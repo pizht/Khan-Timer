@@ -20,7 +20,7 @@ const DIST = path.join(ROOT, 'dist');
 const EDGE = process.env.EDGE_BIN
   ?? '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
 const URL_ARG = process.argv[2];
-const OUT_DIR = process.argv[3] ?? path.join(ROOT, 'references', 'screenshots');
+const OUT_DIR = process.argv[3] ?? path.join(ROOT, '.tmp-caps');
 const PORT = 11600 + Math.floor(Math.random() * 200);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

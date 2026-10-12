@@ -15,8 +15,8 @@
 
 ```bash
 pnpm install
-pnpm run verify          # 类型检查 + 单元测试(238) + 构建 + dist 产物检查(56)
-pnpm run verify:edge     # 真实 Edge 端到端验证(74)
+pnpm run verify          # 类型检查 + 单元测试(271) + 构建 + dist 产物检查(61)
+pnpm run verify:edge     # 真实 Edge 端到端验证（项数随该轮实际题型浮动，以脚本输出为准）
 ```
 
 ---
@@ -25,9 +25,9 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 
 | # | 验收项 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（67/67）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `README.md` → 安装到 Edge。 |
-| 2 | 在目标 Khan Academy 页面显示悬浮计时面板 | ✅ | 检查项 `content script injects the panel host`、`panel is visible`、`the detected question is reported in the panel`（实测 `进度 1 of 4 识别：题目ID`）。截图 `references/screenshots/overlay-countup.png`。 |
-| 3 | 面板可正常折叠/展开或以已约定方式隐藏 | ✅ | 收集 `onToggleCollapse` → 折叠为小胶囊；截图 `references/screenshots/overlay-collapsed.png`。另有弹出面板的「在页面上显示悬浮面板」总开关。 |
+| 1 | 可在支持的 Edge 桌面版通过「加载解压缩的扩展」成功安装 | ✅ | `scripts/verify-extension.mjs` 用 `--load-extension=dist` 把 `dist/` 作为解压扩展加载进 **真实 Microsoft Edge 154.0.4258.62** 并成功运行（67/67）。`scripts/verify-dist.mjs` 确认 `dist/` 内 `manifest.json` 为 Manifest V3 且所有被引用文件存在。安装步骤见 `docs/user-guide.md`（English / 简体中文）。 |
+| 2 | 在目标 Khan Academy 页面显示悬浮计时面板 | ✅ | 检查项 `content script injects the panel host`、`panel is visible`、`the detected question is reported in the panel`（实测 `进度 1 of 4 识别：题目ID`）。截图已删除；按 `AGENTS.md` 重采即可复现该状态。 |
+| 3 | 面板可正常折叠/展开或以已约定方式隐藏 | ✅ | 收集 `onToggleCollapse` → 折叠为小胶囊；截图已删除；按 `AGENTS.md` 重采即可复现该状态。另有弹出面板的「在页面上显示悬浮面板」总开关。 |
 | 4 | 面板操作不会触发题目识别器错误重置计时 | ✅ | 面板挂在 `document.body` 的 Shadow DOM 宿主 `#khan-academy-timer-host` 内，位于题目区域之外；检测器的指纹计算还会剔除该宿主与 `[role="dialog"]`/`[aria-live]`。端到端实测：连续点击暂停/继续/重置后，`reset is reported in the panel footer`（`题目未变化，计时继续`）——重置未被识别为切题。单元测试 `typing an answer into the widget is NOT a question change` 等同类回归用例共 4 条。 |
 
 ## 8.2 计时功能
@@ -38,19 +38,19 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 2 | 倒计时模式使用用户配置的限时开始 | ✅ | 检查项 `popup writes settings to chrome.storage.local`（`countdownLimitSeconds: 6`）、`countdown mode applies live to the current question`（`mode=倒计时`）、`countdown reaching zero shows a visible timeout state`（`限时 6s`）。 |
 | 3 | 暂停后计时数值不继续增加；继续后正确恢复 | ✅ | 检查项 `paused time does not accumulate`（`0:03 → 0:03`，等待 2.5 s）、`resume continues accumulating from the paused value`（`0:03 → 0:05`）。单元测试 `freezes the value while paused and resumes from the frozen value`。 |
 | 4 | 重置只影响当前题目计时 | ✅ | 检查项 `reset returns the current question to ~0`（`0:00`）；`reset is reported in the panel footer` 且题目标识未变（`进度 1 of 4` 不变），已保存记录数不受影响。 |
-| 5 | 倒计时结束后显示超时状态，但不会自动提交答案或切题 | ✅ | 检查项 `countdown reaching zero shows a visible timeout state`（`status=status-expired`，`超时 +0:10`，面板数值转红）、`timeout does not navigate away or submit anything`、`the timeout state is announced in the panel`。截图 `references/screenshots/overlay-countdown-expired.png`。实现上超时只置一个 `expired` 标记并播一次提示音，没有任何提交或导航代码路径。 |
+| 5 | 倒计时结束后显示超时状态，但不会自动提交答案或切题 | ✅ | 检查项 `countdown reaching zero shows a visible timeout state`（`status=status-expired`，`超时 +0:10`，面板数值转红）、`timeout does not navigate away or submit anything`、`the timeout state is announced in the panel`。截图已删除；按 `AGENTS.md` 重采即可复现该状态。实现上超时只置一个 `expired` 标记并播一次提示音，没有任何提交或导航代码路径。 |
 | 6 | 切换题目时保存上一题记录，并启动新题计时 | ✅ | 检查项 `advancing to a new question restarts the timer`（`0:04 → 0:03`）、`the question identity changed on advance`（`进度 1 of 4 → 2 of 4`）、`a record was saved for the finished question`（`已记录 1`）。 |
 | 7 | 同一个题目变化事件被重复触发时，不产生重复记录或多重计时器 | ✅ | 单计时器设计：`ContentController` 只持有**一个** `TimerEngine`。单元测试：`suppresses duplicates: many observations of one change yield one event`（50 次观察 → 1 次切换）、`does not switch on an A -> B -> A flap`、`respects the cooldown between two accepted changes`。引擎侧 `markFirstSubmission` 只记第一次。 |
-| 8 | 浏览器标签短暂进入后台或电脑休眠后，恢复时的时间计算符合产品规则 | ✅ | 计时完全由时间戳差分得出，不依赖 `setInterval` 触发次数。单元测试 `accumulates elapsed time across a large clock jump without any ticks`（**1 小时无 tick**）、`computes the exact expiry instant instead of the tick time`（延后一小时才发现，归零时刻仍精确）。产品规则（真实时间 vs 关闭页面冻结）见 `README.md` → 时间语义。 |
+| 8 | 浏览器标签短暂进入后台或电脑休眠后，恢复时的时间计算符合产品规则 | ✅ | 计时完全由时间戳差分得出，不依赖 `setInterval` 触发次数。单元测试 `accumulates elapsed time across a large clock jump without any ticks`（**1 小时无 tick**）、`computes the exact expiry instant instead of the tick time`（延后一小时才发现，归零时刻仍精确）。产品规则（真实时间 vs 关闭页面冻结）见 `README.md` → 架构与不变量，以及 `docs/user-guide.md` → 使用。 |
 
 ## 8.3 识别与兼容性
 
 | # | 验收项 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | 对已验证的每种页面类型，至少测试连续完成 10 次题目切换 | ❌ **未满足** | 实际完成 **3 次**连续切题（未加载扩展的交互采集，进度索引 0→1→2→3，见 `references/observations.md` 第 1 节）与 **1 次**（加载扩展的端到端）。用于验证的练习只有 4 题且每次切题须先答对，自动化上限受题量限制。**如实记录于 `docs/known-limitations.md` 第 1 条。** |
-| 2 | 输入答案、打开提示、显示答题反馈、展开辅助内容时，不应无条件重置题目计时 | ✅ | 4 条专门回归用例（`tests/question-detector.test.ts` → `REGRESSION — auxiliary content must not reset the timer`）：输入答案、答错浮层、**提示展开使区域文本 3.5 KB→23 KB**、无进度标记时的反馈浮层。端到端另有实测：**答对后停表**（`answering correctly stops the timer`）与**答错后继续计时**（答错时不停表，可重试）。真实观测依据见 `references/observations.md` 第 2、3、4 节。 |
+| 1 | 对已验证的每种页面类型，至少测试连续完成 10 次题目切换 | ❌ **未满足** | 实际完成 **3 次**连续切题（未加载扩展的交互采集，进度索引 0→1→2→3，见 `docs/research/observations.md` 第 1 节）与 **1 次**（加载扩展的端到端）。用于验证的练习只有 4 题且每次切题须先答对，自动化上限受题量限制。**如实记录于 `docs/known-limitations.md` 第 1 条。** |
+| 2 | 输入答案、打开提示、显示答题反馈、展开辅助内容时，不应无条件重置题目计时 | ✅ | 4 条专门回归用例（`tests/question-detector.test.ts` → `REGRESSION — auxiliary content must not reset the timer`）：输入答案、答错浮层、**提示展开使区域文本 3.5 KB→23 KB**、无进度标记时的反馈浮层。端到端另有实测：**答对后停表**（`answering correctly stops the timer`）与**答错后继续计时**（答错时不停表，可重试）。真实观测依据见 `docs/research/observations.md` 第 2、3、4 节。 |
 | 3 | 无法可靠识别时提供可见提示或可用的手动恢复方式 | ✅ | 检测器发出 `uncertain` 后：**暂停**本题计时并**隐藏**面板（不再显示一个量不出东西的时钟），扩展弹出面板给出可见提示（`未识别到题目（question region not found）。本题计时已暂停，重新识别到本题后会自动继续。`）、「识别」一栏显示 `未识别/弱信号`；重新识别到**同一道题**后自动继续计时，且本题仍会出现在结束页的用时统计里。单元测试 `degrades conservatively when no question region is found`、`keeps the current timer when the identity disappears mid-question`、`hides the panel, freezes the clock and resumes the same question from the frozen value`、`keeps a question paused mid-way in the end-of-exercise summary`。详见下方「追加修正：识别：未识别时暂停计时并隐藏面板」。 |
-| 4 | 验收清单明确列出已验证支持和未验证的页面类型 | ✅ | `docs/compatibility.md`（验收视角）与 `references/page-inventory.md`（研究视角），按 `Edge-verified` / `Automated-tested` / `Observed` / `Unverified` 四级列明。 |
+| 4 | 验收清单明确列出已验证支持和未验证的页面类型 | ✅ | `docs/compatibility.md`（验收视角）与 `docs/research/page-inventory.md`（研究视角），按 `Edge-verified` / `Automated-tested` / `Observed` / `Unverified` 四级列明。 |
 
 ## 8.4 数据与隐私
 
@@ -60,7 +60,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 2 | 关闭并重新打开页面后，配置仍然保留 | ✅ | 单元测试 `survives a page reload by reading back from storage`。进行中的题目会话也有覆盖：`round-trips a running session and continues from the saved elapsed time`。 |
 | 3 | 能清除保存的计时记录 | ✅ | 端到端检查项 `clearing records removes them from local storage`（`已保存 0 条`）与 `clearing records leaves settings intact`（设置保留）。单元测试 `clears records but leaves settings alone (spec 8.4)`。UI 入口：弹出面板「清除全部记录」。 |
 | 4 | 网络检查/代码审查确认没有计时数据上传或非必要遥测 | ✅ | `scripts/verify-dist.mjs` 对 `dist/*.js` 逐项断言**不存在** `fetch` / `XMLHttpRequest` / `WebSocket` / `EventSource` / `sendBeacon` / `eval` / `new Function` / `importScripts` / 动态插入 `<script>` / 外部 http(s) 地址，并检查 source map 存在。构建**刻意不压缩**以便人工审查。项目源码中没有任何网络调用。 |
-| 5 | 扩展权限与本项目范围一致 | ✅ | 只声明 `storage` 与 `activeTab`；`verify-dist.mjs` 断言权限在允许清单内、**无** `host_permissions`、**无** `optional_permissions`、**无** background worker、**无** `web_accessible_resources`，且内容脚本只匹配 `khanacademy.org`（拒绝 `<all_urls>`）。权限逐条用途见 `README.md` → 权限说明。 |
+| 5 | 扩展权限与本项目范围一致 | ✅ | 只声明 `storage` 与 `activeTab`；`verify-dist.mjs` 断言权限在允许清单内、**无** `host_permissions`、**无** `optional_permissions`、**无** background worker、**无** `web_accessible_resources`，且内容脚本只匹配 `khanacademy.org`（拒绝 `<all_urls>`）。权限逐条用途见 `README.md` → 权限，用户视角见 `docs/user-guide.md` → 你的数据与隐私。 |
 
 **8.4 小结：5 / 5 满足。8.1：4 / 4。8.2：8 / 8。8.3：3 / 4（连续 10 次切题未满足）。**
 
@@ -99,7 +99,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | **记录语义** | `TimerEngine.pause(now, automatic)`：`automatic` 为真时不再置 `sawPause`（协调器在识别丢失时传 `true`），所以记录的 `wasPaused` 仍然只表示「学生按过暂停」；无法识别的时间只体现在 `pausedMs`（结束页该行会多一行小字 `暂停 0:31`） |
 | **顺带修复的真实缺陷** | 题目区域被换掉再**原样**换回来时，进度标记没有变、新区域里也没有任何 mutation，检测器原本不会再评估一次，于是会永远停在「未识别」（面板一直不回来）。`QuestionDetector.onBodyMutation()` 现在在**重新绑定到区域的那一刻立即评估**，并新增回归用例 |
 | **可见提示的落点** | 面板隐藏，所以提示改由**扩展弹出面板**呈现：`未识别到题目：本题计时已暂停，重新识别到本题后自动继续`（`pausedForUnidentified` 字段） |
-| **单元测试** | `TimerEngine`：`an automatic pause freezes the clock without claiming the learner paused it`、`a learner pause still marks the question as paused`。检测器：`re-evaluates the moment the region comes back, with nothing else changing`。协调器（jsdom 端到端）：`hides the panel, freezes the clock and resumes the same question from the frozen value`、`never undoes a pause the learner asked for`、`keeps a question paused mid-way in the end-of-exercise summary`、`matches the manual verification recipe in the README (remove then restore the region)`（最后一条与 README 的手动验证步骤逐字对应） |
+| **单元测试** | `TimerEngine`：`an automatic pause freezes the clock without claiming the learner paused it`、`a learner pause still marks the question as paused`。检测器：`re-evaluates the moment the region comes back, with nothing else changing`。协调器（jsdom 端到端）：`hides the panel, freezes the clock and resumes the same question from the frozen value`、`never undoes a pause the learner asked for`、`keeps a question paused mid-way in the end-of-exercise summary`、`matches the manual verification recipe in docs/manual-verification.md (remove then restore the region)`（最后一条与 `docs/manual-verification.md` 的手动验证步骤逐字对应） |
 | **端到端** | **未在真实 Edge 上驱动验证**：浏览器里无法可靠制造「题目区域消失、进度标记不动、随后同一道题原样回来」这一幕。证据为 jsdom 端到端（真实协调器 + 真实检测器 + 真实存储逻辑，仅 DOM 与 `chrome.storage` 为替身），见 `tests/controller.test.ts`。这一保留已记入 `docs/known-limitations.md` 第 24 条 |
 
 ### 追加修正：正在计时的面板上残留「无法可靠识别当前题目」（用户报告）
@@ -117,7 +117,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 
 实测 `/test-prep/v2-sat-math/...` 的四类页面（练习、测验、单元测试、课程挑战），
 开始答题后与已验证的普通练习页**结构完全一致**，**无需新增选择器**。
-详见 [`references/observations.md`](../references/observations.md) 第 12 节与
+详见 [`docs/research/observations.md`](../docs/research/observations.md) 第 12 节与
 [`docs/compatibility.md`](compatibility.md) 第 1.4 / 1.5 节。
 
 ### 追加修正：答错后重答正确没有停表（用户报告）
@@ -140,7 +140,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 - **发现 `addition_4` 有 bonus question。** 最后一道普通题之后的控件文案是
   `Bonus question`（进入加试题，进度索引回到 0），加试题之后才是 `Show summary`。
   这一发现修正了早期「索引倒退＝练习重做」的误读，并已在
-  `references/observations.md` 第 10.1、10.1.1 节更正。
+  `docs/research/observations.md` 第 10.1、10.1.1 节更正。
 - **结束页表格按题号编排**：每行对应「第 N 题」，记录在开始计时那一刻就带着自己的
   题号（页面进度索引 + 1）；没有计时数据的题号保留题号并标注「数据缺失」，不会把下一题
   顶上来。索引倒退的那一行（加试题）排在编号题目之后并标记「加试」，
@@ -176,7 +176,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | 2 | 自动进入下一题 | ✅ | 端到端 `advancing to a new question restarts the timer` |
 | 3 | 使用页面提供的上一题/下一题导航 | ⚠️ | 已验证页面无「上一题」控件；「下一题」已覆盖。上一题路径仅有单元测试（`forceSwitch` / 索引变化）。 |
 | 4 | 输入答案但尚未提交 | ✅ | 单元测试 `typing an answer into the widget is NOT a question change` |
-| 5 | 提交答案并出现正确/错误反馈 | ✅ | 端到端提交；真实采集观测了答对/答错两种浮层（`references/observations.md` 第 2 节）；`readSubmissionOutcome` 单元测试 |
+| 5 | 提交答案并出现正确/错误反馈 | ✅ | 端到端提交；真实采集观测了答对/答错两种浮层（`docs/research/observations.md` 第 2 节）；`readSubmissionOutcome` 单元测试 |
 | 6 | 展开提示、解释或辅助内容 | ✅ | 专门回归用例 `hint expansion that grows the region 3.5 KB -> 23 KB is NOT a question change` |
 | 7 | 同一道题触发多次 DOM 变化 | ✅ | 单元测试 `suppresses duplicates…`（50 次观察）、`does not switch on an A -> B -> A flap` |
 | 8 | 正计时暂停、恢复和重置 | ✅ | 端到端 3 项 + `tests/timer-engine.test.ts` |
@@ -194,13 +194,13 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | # | 要求 | 状态 | 位置 |
 |---|---|---|---|
 | 1 | 完整 TypeScript 源代码 | ✅ | `src/`（12 个文件）；`pnpm run typecheck` 在 `strict` + `noUncheckedIndexedAccess` 下通过 |
-| 2 | 可由 Edge 加载的构建输出目录 `dist/` | ✅ | `dist/`（332 KB）；`pnpm run build` 生成；`verify-dist.mjs` 56 项检查通过；已被真实 Edge 加载 |
+| 2 | 可由 Edge 加载的构建输出目录 `dist/` | ✅ | `dist/`（633 KB）；`pnpm run build` 生成；`verify-dist.mjs` 61 项检查通过；已被真实 Edge 加载 |
 | 3 | `manifest.json` 与最小必要图标资源 | ✅ | `public/manifest.json` → `dist/manifest.json`；图标 16/32/48/128 px，由 `scripts/make-icons.mjs` 用 Node 内置模块生成（无图像依赖），`verify-dist.mjs` 校验为真实 PNG 且尺寸匹配 |
-| 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | `README.md`，含全部六项 + 故障排查 |
-| 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `README.md` → 设置说明 / 本地数据与清除 |
-| 6 | 单元测试及其运行说明 | ✅ | `tests/`（7 文件 238 用例）；运行说明见 `README.md` → 测试与验证 |
-| 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `references/page-inventory.md` |
-| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（23 条，含未满足的验收项、切换练习的边界条件与「识别：未识别」的验证保留） |
+| 4 | `README.md`：环境准备、构建、安装、升级、卸载与常见问题 | ✅ | 拆成两份：开发者说明 [`README.md`](../README.md)（构建、验证、发布、架构不变量）+ 用户指南 [`docs/user-guide.md`](user-guide.md)（从 Release 下载 ZIP 导入、升级、卸载、设置、隐私、疑难解答，**中英双语、默认英文**） |
+| 5 | 配置说明：模式、默认限时、提示音、本地数据位置/清除方式 | ✅ | `docs/user-guide.md` → 设置 / 历史记录 / 你的数据与隐私 |
+| 6 | 单元测试及其运行说明 | ✅ | `tests/`（8 文件 271 用例）；运行说明见 `README.md` → 快速开始 / 验证与 CI |
+| 7 | 已验证页面类型清单和人工测试结果 | ✅ | `docs/compatibility.md`；研究依据 `docs/research/page-inventory.md` |
+| 8 | 已知限制清单 | ✅ | `docs/known-limitations.md`（32 条，含未满足的验收项、切换练习的边界条件与「识别：未识别」的验证保留） |
 
 ---
 
@@ -212,7 +212,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | TypeScript + Manifest V3，编译为可加载 JavaScript | ✅ `typescript` + `esbuild`（不压缩 + source map），`src/` 与 `dist/` 严格分离 |
 | 倒计时结束只提醒，不自动提交或跳题 | ✅ `expired` 标记 + 一次提示音；无提交/导航代码路径；端到端已验证 |
 | 本地保存数据，不使用云同步或账号系统 | ✅ 仅 `chrome.storage.local`；`verify-dist.mjs` 断言无任何网络 API |
-| 仅对测试过的页面类型承诺支持 | ✅ `docs/compatibility.md` 分级；`references/page-inventory.md` 明确不承诺未验证页面 |
+| 仅对测试过的页面类型承诺支持 | ✅ `docs/compatibility.md` 分级；`docs/research/page-inventory.md` 明确不承诺未验证页面 |
 | 识别不确定时保守降级，不冒险重置计时 | ✅ `uncertain` 事件 → **暂停**本题计时（不重置、不丢弃：引擎与累计用时都保留）+ 隐藏面板 + 弹出面板可见提示；重新识别到同一道题后自动继续，该题仍进入结束页统计。单元测试与截图佐证 |
 | 首版包含本地计时记录清除功能与测试清单 | ✅ 弹出面板「清除全部记录」（端到端验证）+ 本对照表与测试清单 |
 
@@ -237,7 +237,7 @@ pnpm run verify:edge     # 真实 Edge 端到端验证(74)
 | `typescript` | 必需 | ✅ 5.9.3 | `pnpm run typecheck` |
 | `esbuild` | 必需 | ✅ 0.24.2 | `scripts/build.mjs` |
 | `@types/chrome` | 推荐 | ✅ 0.0.287 | 扩展 API 类型 |
-| `vitest` | 推荐 | ✅ 2.1.9 | 238 个用例 |
+| `vitest` | 推荐 | ✅ 2.1.9 | 271 个用例 |
 | `jsdom` | 推荐 | ✅ 25.0.1 | DOM 适配器测试环境（`vitest.config.ts`） |
 
 **未引入** React、Vue、任何 UI 组件库、数据库驱动或网络请求库 —— 与需求文档

@@ -644,7 +644,7 @@ describe('a question that cannot be identified', () => {
     expect(summaryText()).not.toContain(t('summary.tagBonus'));
   });
 
-  it('matches the manual verification recipe in the README (remove then restore the region)', async () => {
+  it('matches the manual verification recipe in docs/manual-verification.md (remove then restore the region)', async () => {
     const { data } = installChromeStorage();
 
     window.history.pushState({}, '', EXERCISE_A);
@@ -659,7 +659,7 @@ describe('a question that cannot be identified', () => {
       enginePhase: 'running',
     });
 
-    // --- README → 手动验证「识别：未识别 → 暂停 → 恢复」第 2 步 ---
+    // --- docs/manual-verification.md →「识别：未识别 → 暂停 → 恢复」第 2 步 ---
     const removed: Array<[Node, Element, Node | null]> = [
       ...document.querySelectorAll(
         'form[name="answerform"], .framework-perseus, .perseus-renderer',
@@ -675,7 +675,7 @@ describe('a question that cannot be identified', () => {
       enginePhase: 'paused',
     });
 
-    // --- README → 手动验证 第 3 步：原样放回 ---
+    // --- docs/manual-verification.md 第 3 步：原样放回 ---
     [...removed].reverse().forEach(([parent, el, next]) => parent.insertBefore(el, next));
     await advance(1500);
 

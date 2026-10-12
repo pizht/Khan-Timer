@@ -7,7 +7,8 @@
  *     synthetic snapshots.
  *  2. `QuestionDetector` — the DOM adapter, driven against a synthetic DOM that
  *     mirrors the structure actually observed on Khan Academy
- *     (see references/snapshots/ and references/observations.md).
+ *     (see docs/research/observations.md; re-capture the live DOM yourself with
+ *     scripts/capture/ before changing any selector — see AGENTS.md).
  *
  * The regression block near the end encodes the two most important empirical
  * findings from live observation. Both are cases where a naive implementation
