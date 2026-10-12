@@ -1,4 +1,4 @@
-# <img src="public/icons/icon128.png" width="45" align="left" alt=""> Khan Academy Timer
+# <img src="public/icons/icon128.png" width="72" align="left" alt=""> Khan Academy Timer
 
 一个用于 **Chrome / Edge** 的扩展，为可汗学院（Khan Academy）的题目计时。
 通过 ZIP 手动安装。

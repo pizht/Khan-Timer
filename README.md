@@ -1,4 +1,4 @@
-# <img src="public/icons/icon128.png" width="45" align="left" alt=""> Khan Academy Timer
+# <img src="public/icons/icon128.png" width="72" align="left" alt=""> Khan Academy Timer
 
 A **Chrome / Edge** extension that times Khan Academy questions. Installed manually from a ZIP
 file.
