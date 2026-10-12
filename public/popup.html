@@ -1,89 +1,106 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>Khan Academy Timer</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
+    <!--
+      Labels carry `data-i18n="<messageKey>"` and are translated at runtime by
+      `src/i18n/dom.ts`: Manifest V3 substitutes __MSG_key__ in manifest.json and
+      CSS only, never in HTML. The text written here is English — the catalog's
+      source language and the fallback for a key that is ever unknown — and an
+      autonym such as "English" or "中文（简体）" is deliberately NOT marked: a
+      language names itself in its own language.
+    -->
     <header class="header">
-      <h1>题目计时</h1>
+      <h1 data-i18n="app.timerTitle">Question timer</h1>
       <span id="version" class="version"></span>
     </header>
 
     <section class="card" id="status-card">
       <div class="status-row">
-        <span class="status-label">当前状态</span>
-        <span class="status-value" id="status-text">读取中…</span>
+        <span class="status-label" data-i18n="popup.statusLabel">Status</span>
+        <span class="status-value" id="status-text" data-i18n="popup.statusLoading">Reading…</span>
       </div>
       <div class="readout" id="readout" hidden>
         <span class="time" id="display">0:00</span>
-        <span class="tag" id="mode-tag">正计时</span>
-        <span class="tag expired-tag" id="expired-tag" hidden>已超时</span>
+        <span class="tag" id="mode-tag" data-i18n="mode.countup">Count up</span>
+        <span class="tag expired-tag" id="expired-tag" data-i18n="popup.overTime" hidden>Over time</span>
       </div>
       <dl class="kv" id="details" hidden>
-        <dt class="dev-only">识别方式</dt><dd id="d-strategy" class="dev-only">—</dd>
-        <dt class="dev-only">置信度</dt><dd id="d-confidence" class="dev-only">—</dd>
-        <dt class="dev-only">题目指纹</dt><dd id="d-question" class="mono dev-only">—</dd>
-        <dt>题目进度</dt><dd id="d-progress">—</dd>
-        <dt class="dev-only">最近事件</dt><dd id="d-event" class="dev-only">—</dd>
+        <dt class="dev-only" data-i18n="popup.detailStrategy">Detection</dt><dd id="d-strategy" class="dev-only">—</dd>
+        <dt class="dev-only" data-i18n="popup.detailConfidence">Confidence</dt><dd id="d-confidence" class="dev-only">—</dd>
+        <dt class="dev-only" data-i18n="popup.detailQuestionKey">Question key</dt><dd id="d-question" class="mono dev-only">—</dd>
+        <dt data-i18n="popup.detailProgress">Question progress</dt><dd id="d-progress">—</dd>
+        <dt class="dev-only" data-i18n="popup.detailLastEvent">Last event</dt><dd id="d-event" class="dev-only">—</dd>
       </dl>
       <p class="warning" id="warning" hidden></p>
       <details class="diag dev-only" id="diag-box" hidden>
-        <summary>诊断信息</summary>
+        <summary data-i18n="popup.diagnosticsSummary">Diagnostics</summary>
         <pre id="diag-text"></pre>
       </details>
     </section>
 
     <section class="card">
-      <h2>设置</h2>
+      <h2 data-i18n="popup.settingsHeading">Settings</h2>
 
       <label class="field">
-        <span class="field-label">默认计时模式</span>
+        <span class="field-label" data-i18n="popup.settingLanguage">Language</span>
+        <select id="language">
+          <option value="auto" data-i18n="popup.languageAuto">Automatic (browser language)</option>
+          <option value="en">English</option>
+          <option value="zh-CN">中文（简体）</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="field-label" data-i18n="popup.settingDefaultMode">Default timer mode</span>
         <select id="defaultMode">
-          <option value="countup">正计时（记录用时）</option>
-          <option value="countdown">倒计时（每题限时）</option>
+          <option value="countup" data-i18n="popup.modeCountupOption">Count up (record time spent)</option>
+          <option value="countdown" data-i18n="popup.modeCountdownOption">Countdown (limit per question)</option>
         </select>
       </label>
 
       <label class="field" id="countdown-limit-field">
-        <span class="field-label">每题限时（秒）</span>
+        <span class="field-label" data-i18n="popup.settingLimit">Time limit per question (seconds)</span>
         <input id="countdownLimitSeconds" type="number" min="5" max="3600" step="5" />
       </label>
 
       <label class="field field-inline">
         <input id="soundEnabled" type="checkbox" />
-        <span>倒计时归零时播放提示音</span>
+        <span data-i18n="popup.settingSound">Play a tone when the countdown reaches zero</span>
       </label>
 
       <label class="field field-inline">
         <input id="overlayVisible" type="checkbox" />
-        <span>在页面上显示悬浮面板</span>
+        <span data-i18n="popup.settingOverlayVisible">Show the floating panel on the page</span>
       </label>
 
       <label class="field field-inline">
         <input id="overlayCollapsed" type="checkbox" />
-        <span>面板默认折叠为小胶囊</span>
+        <span data-i18n="popup.settingOverlayCollapsed">Start the panel collapsed as a small pill</span>
       </label>
 
       <label class="field field-inline">
         <input id="resumeAcrossReload" type="checkbox" />
-        <span>关闭页面后重新打开时，继续上次用时</span>
+        <span data-i18n="popup.settingResume">Resume the previous time when the page is reopened</span>
       </label>
 
       <label class="field field-inline">
         <input id="developerMode" type="checkbox" />
-        <span>开发者模式</span>
+        <span data-i18n="popup.settingDeveloperMode">Developer mode</span>
       </label>
 
       <p class="hint" id="save-hint" hidden></p>
     </section>
 
     <section class="card">
-      <h2>历史记录</h2>
+      <h2 data-i18n="popup.recordsHeading">History</h2>
       <div class="record-actions">
-        <span id="record-count" class="count">已保存 0 条</span>
-        <button id="clear-records" class="btn danger" type="button">清除全部记录</button>
+        <span id="record-count" class="count"></span>
+        <button id="clear-records" class="btn danger" type="button" data-i18n="popup.clearRecords">Clear all records</button>
       </div>
       <p class="hint" id="records-hint" hidden></p>
       <ul id="recent" class="recent"></ul>

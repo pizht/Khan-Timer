@@ -10,6 +10,12 @@
  *
  * This is what moves a page type from "Observed" to "Edge-verified".
  *
+ * Language: every label read out of the panel is the Chinese one, so the run
+ * pins the extension to Chinese — `--lang=zh-CN` for the browser plus the
+ * extension's own `language` setting, written before anything is asserted. The
+ * language selector itself is then exercised, in both directions, from the
+ * popup's real markup.
+ *
  * Checks performed:
  *   1. the content script injects and the Shadow DOM panel is present
  *   2. countup mode starts automatically on a detected question
@@ -158,6 +164,43 @@ class Cdp {
   }
 }
 
+/**
+ * Pin the interface language for this run.
+ *
+ * The extension renders in the language the learner chose (by default the
+ * browser's), and every label this script asserts on is the Chinese one. The
+ * browser is launched with `--lang=zh-CN` for `navigator.language`, but that flag
+ * is not honoured everywhere, so the setting itself is written through the
+ * extension's own storage as well: a run then cannot fail for a reason that has
+ * nothing to do with what is being verified.
+ */
+async function pinLanguage(locale = 'zh-CN') {
+  const id = unpackedExtensionId(DIST);
+  let popup = null;
+  try {
+    popup = await openTarget(`chrome-extension://${id}/popup.html`);
+    const written = await popup.evaluate(
+      `new Promise((resolve) => {
+         if (typeof chrome === 'undefined' || !chrome.storage) { resolve(false); return; }
+         chrome.storage.local.get('settings', (all) => {
+           const settings = Object.assign({}, all && all.settings, { language: ${JSON.stringify(locale)} });
+           chrome.storage.local.set({ settings }, () => resolve(true));
+         });
+       })`,
+    );
+    console.log(`  interface language pinned to ${locale}: ${written ? 'ok' : 'FAILED'}`);
+    return written === true;
+  } catch (error) {
+    console.log(`  could not pin the interface language: ${error.message}`);
+    return false;
+  } finally {
+    // The popup polls the active tab every second; nothing needs it any more.
+    if (popup?.targetId) {
+      await fetch(`http://127.0.0.1:${PORT}/json/close/${popup.targetId}`).catch(() => undefined);
+    }
+  }
+}
+
 /** Read the panel exactly as rendered, straight out of the Shadow DOM. */
 const READ_PANEL = `(() => {
   const host = document.getElementById('khan-academy-timer-host');
@@ -173,6 +216,7 @@ const READ_PANEL = `(() => {
     shadow: true,
     time: norm(q('time')?.textContent),
     pillTime: norm(q('pill-time')?.textContent),
+    title: norm(q('title')?.textContent),
     mode: norm(q('mode')?.textContent),
     pauseLabel: norm(q('pause')?.textContent),
     pauseDisabled: q('pause') ? q('pause').disabled : null,
@@ -442,6 +486,10 @@ async function main() {
       '--no-default-browser-check',
       '--no-service-autorun',
       '--disable-features=Translate,MediaRouter',
+      // The extension renders in the language the user chose (by default the
+      // browser's), and every label read below is the Chinese one: this flag is
+      // what makes the run deterministic instead of depending on the machine.
+      '--lang=zh-CN',
       `--user-data-dir=${profile}`,
       `--remote-debugging-port=${PORT}`,
       `--disable-extensions-except=${DIST}`,
@@ -465,6 +513,15 @@ async function main() {
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
 
+    // Every label read below is the Chinese one: make sure the extension is set
+    // to render Chinese before anything is asserted.
+    const languagePinned = await pinLanguage();
+    check(
+      'the interface language could be pinned for this run',
+      languagePinned,
+      'written to chrome.storage.local as settings.language',
+    );
+
     // Wait for the SPA to render a question.
     let rendered = false;
     for (let i = 0; i < 60; i += 1) {
@@ -487,6 +544,21 @@ async function main() {
     }
     check('content script injects the panel host', Boolean(panel?.present));
     check('panel uses Shadow DOM isolation', Boolean(panel?.shadow));
+
+    // 1b. The language this run asserts against.
+    //
+    // Reported here, before any label is checked, on purpose: if the panel were
+    // rendering in another language, this single check explains why the dozens of
+    // label checks below would fail, instead of leaving fifty confusing
+    // mismatches to read. Asserted on the PANEL rather than on the browser flag,
+    // because the panel is what the rest of the run reads.
+    check(
+      'the panel renders in the language this run asserts against',
+      panel?.title === '题目计时',
+      `title=${JSON.stringify(panel?.title)} navigator.language=${await cdp
+        .evaluate(`navigator.language`)
+        .catch(() => null)}`,
+    );
 
     // The panel is shown once a question is actually being timed (so it stays
     // off course pages and videos), which on a fresh page load is a moment after
@@ -1123,6 +1195,87 @@ async function main() {
           rendered?.checkboxes?.resumeAcrossReload === stored?.resumeAcrossReload,
         `rendered=${JSON.stringify(rendered)} stored=${JSON.stringify(stored)}`,
       );
+
+      // 10c. The language selector, end to end: the extension must render in the
+      //      chosen language, in the popup AND in the panel already injected in
+      //      the page, and must go back to following the browser afterwards.
+      const languageState = await popup.evaluate(`(async () => {
+        const sel = document.getElementById('language');
+        const label = () => (document.querySelector('[data-i18n="popup.settingsHeading"]') || {}).textContent;
+        const before = {
+          options: Array.from(sel.options).map((o) => o.value),
+          value: sel.value,
+          label: label(),
+          htmlLang: document.documentElement.lang,
+        };
+        sel.value = 'en';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 600));
+        const english = {
+          label: label(),
+          htmlLang: document.documentElement.lang,
+          modeOption: ((document.getElementById('defaultMode') || {}).selectedOptions || [{}])[0].textContent,
+          storedLanguage: ((await chrome.storage.local.get('settings')).settings || {}).language,
+        };
+        sel.value = 'auto';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 600));
+        const restored = {
+          label: label(),
+          htmlLang: document.documentElement.lang,
+          storedLanguage: ((await chrome.storage.local.get('settings')).settings || {}).language,
+        };
+        return { before, english, restored };
+      })()`);
+      check(
+        'language selector offers "follow the browser" plus every shipped language',
+        languageState?.before?.options?.join() === 'auto,en,zh-CN',
+        JSON.stringify(languageState?.before?.options),
+      );
+      check(
+        'choosing English re-letters the popup and is persisted',
+        languageState?.english?.label === 'Settings' &&
+          languageState?.english?.modeOption === 'Count up (record time spent)' &&
+          languageState?.english?.htmlLang === 'en' &&
+          languageState?.english?.storedLanguage === 'en',
+        JSON.stringify(languageState?.english),
+      );
+      check(
+        'going back to "follow the browser" restores the browser language',
+        languageState?.restored?.label === '设置' &&
+          languageState?.restored?.htmlLang?.toLowerCase().startsWith('zh') &&
+          languageState?.restored?.storedLanguage === 'auto',
+        JSON.stringify(languageState?.restored),
+      );
+
+      // The panel on the page is a separate bundle with its own catalog: it has
+      // to follow the same setting through chrome.storage.onChanged.
+      if (cdp) {
+        await popup.evaluate(`(async () => {
+          const sel = document.getElementById('language');
+          sel.value = 'en';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 800));
+          return true;
+        })()`);
+        await sleep(1200);
+        const englishPanel = await cdp.evaluate(READ_PANEL).catch(() => null);
+        const panelLabels = [englishPanel?.title, englishPanel?.mode, englishPanel?.pauseLabel, englishPanel?.meta, englishPanel?.footer]
+          .filter(Boolean)
+          .join(' ');
+        check(
+          'the in-page panel re-letters itself when the language changes',
+          englishPanel?.title === 'Question timer' && !/[\u4e00-\u9fa5]/.test(panelLabels),
+          `title=${englishPanel?.title} labels=${panelLabels}`,
+        );
+        await popup.evaluate(`(async () => {
+          const sel = document.getElementById('language');
+          sel.value = 'auto';
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          await new Promise((r) => setTimeout(r, 800));
+          return true;
+        })()`);
+      }
     } catch (error) {
       check('popup page could be verified', false, error.message);
     }

@@ -159,6 +159,23 @@ export type DetectionEvent =
  * Records and settings
  * ------------------------------------------------------------------ */
 
+/**
+ * A language the extension ships a message catalog for (see `src/i18n/`).
+ *
+ * These are BCP-47 tags, so they can be handed straight to `Intl`/`toLocale*`.
+ */
+export type Locale = 'en' | 'zh-CN';
+
+/**
+ * The stored language setting.
+ *
+ * `auto` follows the browser UI language; any other value forces that catalog,
+ * which is what makes the English UI testable without reconfiguring the browser.
+ * English (`FALLBACK_LOCALE`) is used for a language we do not ship and for any
+ * individual message a translation is missing.
+ */
+export type LanguageSetting = 'auto' | Locale;
+
 /** One saved timing record. Contains no answer content (spec 2.5 / 6). */
 export interface QuestionRecord {
   /** Locally generated unique id. */
@@ -265,6 +282,11 @@ export interface OverlayPosition {
 
 /** User settings, persisted in `chrome.storage.local` (spec 2.5). */
 export interface Settings {
+  /**
+   * Language of every label the extension renders: the in-page panel, the
+   * end-of-exercise card and the popup. `auto` follows the browser UI language.
+   */
+  language: LanguageSetting;
   /** Timer mode used for newly detected questions. */
   defaultMode: TimerMode;
   /** Time limit per question in seconds, countdown mode. */

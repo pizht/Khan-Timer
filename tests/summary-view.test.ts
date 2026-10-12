@@ -23,6 +23,7 @@ import {
   sanitizeRun,
   saveRun,
 } from '../src/storage.js';
+import { t } from '../src/i18n/index.js';
 import type { ActiveRun, QuestionRecord, SummaryRow } from '../src/types.js';
 
 const NOW = 1_700_000_000_000;
@@ -343,14 +344,17 @@ describe('SummaryView', () => {
       ]
     });
     const text = shadowText();
-    expect(text).toContain('本轮每题用时');
-    expect(text).toContain('第 1 题');
+    expect(text).toContain(t('summary.title'));
+    expect(text).toContain(t('summary.questionNumber', { number: 1 }));
     expect(text).toContain('0:12');
-    expect(text).toContain('第 2 题');
+    expect(text).toContain(t('summary.questionNumber', { number: 2 }));
     expect(text).toContain('1:05');
-    expect(text).toContain('第 3 题');
-    expect(text).toContain('第 4 题');
-    expect(text).toContain('共 4 题');
+    expect(text).toContain(t('summary.questionNumber', { number: 3 }));
+    expect(text).toContain(t('summary.questionNumber', { number: 4 }));
+    // The header line sums the attempt (12s + 65s + 8s + 30s) and is asserted
+    // through the catalog, so both the wording and the plural form chosen for
+    // four questions stay the catalog's business rather than this test's.
+    expect(text).toContain(t('summary.totalAll', { count: 4, total: '1:55' }));
   });
 
   it('tags timed-out, skipped, correct and incorrect rows', () => {
@@ -365,10 +369,10 @@ describe('SummaryView', () => {
       ]
     });
     const text = shadowText();
-    expect(text).toContain('超时');
-    expect(text).toContain('已跳过');
-    expect(text).toContain('答对');
-    expect(text).toContain('答错');
+    expect(text).toContain(t('summary.tagTimedOut'));
+    expect(text).toContain(t('summary.tagSkipped'));
+    expect(text).toContain(t('summary.tagCorrect'));
+    expect(text).toContain(t('summary.tagIncorrect'));
   });
 
   it('marks the optional bonus question', () => {
@@ -381,10 +385,10 @@ describe('SummaryView', () => {
         makeRow({ questionNumber: 3, bonus: true }),
       ],
     });
-    expect(shadowText()).toContain('加试');
+    expect(shadowText()).toContain(t('summary.tagBonus'));
   });
 
-  it('numbers rows by order, so a bonus question never repeats "第 1 题"', () => {
+  it('numbers rows by order, so a bonus question never repeats a number', () => {
     // The page's own index restarts at 0 for the bonus question; the card must
     // still show an unambiguous sequence.
     const view = mount();
@@ -399,10 +403,11 @@ describe('SummaryView', () => {
     const numbers = Array.from(
       document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelectorAll('td.num') ?? [],
     ).map((c) => (c.textContent ?? '').trim());
-    expect(numbers[0]).toContain('第 1 题');
-    expect(numbers[1]).toContain('第 2 题');
-    expect(numbers[2]).toContain('第 3 题');
-    expect(numbers.filter((n) => n.startsWith('第 1 题'))).toHaveLength(1);
+    const first = t('summary.questionNumber', { number: 1 });
+    expect(numbers[0]).toContain(first);
+    expect(numbers[1]).toContain(t('summary.questionNumber', { number: 2 }));
+    expect(numbers[2]).toContain(t('summary.questionNumber', { number: 3 }));
+    expect(numbers.filter((n) => n.startsWith(first))).toHaveLength(1);
   });
 
   it('has exactly two columns: the question and its time', () => {
@@ -419,13 +424,13 @@ describe('SummaryView', () => {
     const headers = Array.from(root?.querySelectorAll('thead th') ?? []).map((c) =>
       (c.textContent ?? '').trim(),
     );
-    expect(headers).toEqual(['题目', '用时']);
+    expect(headers).toEqual([t('summary.colQuestion'), t('summary.colDuration')]);
     for (const tr of Array.from(root?.querySelectorAll('tbody tr') ?? [])) {
       expect(tr.querySelectorAll('td').length).toBe(2);
     }
     // No mode wording anywhere in the card.
-    expect(shadowText()).not.toContain('正计时');
-    expect(shadowText()).not.toContain('倒计时');
+    expect(shadowText()).not.toContain(t('mode.countup'));
+    expect(shadowText()).not.toContain(t('mode.countdown'));
     expect(shadowText()).not.toContain('60s');
   });
 
@@ -438,7 +443,7 @@ describe('SummaryView', () => {
     const root = document.getElementById(SUMMARY_HOST_ID)?.shadowRoot;
     const durCell = (root?.querySelector('td.dur')?.textContent ?? '').replace(/\s+/g, ' ');
     expect(durCell).toContain('0:20');
-    expect(durCell).toContain('暂停 0:05');
+    expect(durCell).toContain(t('summary.paused', { duration: '0:05' }));
     expect(root?.querySelectorAll('td.dur').length).toBe(1);
   });
 
@@ -446,8 +451,8 @@ describe('SummaryView', () => {
     const view = mount();
     view.render({ collapsed: false, rows: [] });
     const text = shadowText();
-    expect(text).toContain('本轮没有记录到题目用时');
-    expect(text).not.toContain('第 1 题');
+    expect(text).toContain(t('summary.empty'));
+    expect(text).not.toContain(t('summary.questionNumber', { number: 1 }));
   });
 
   it('re-rendering replaces rows rather than appending duplicates', () => {
@@ -468,7 +473,7 @@ describe('SummaryView', () => {
       rows: [makeRow({ questionNumber: null })]
     });
     const text = shadowText();
-    expect(text).toContain('第 — 题');
+    expect(text).toContain(t('summary.questionNumber', { number: '—' }));
     expect(text).not.toMatch(/null|undefined/);
   });
 
@@ -572,8 +577,8 @@ describe('SummaryView — collapse', () => {
     expect(document.getElementById(SUMMARY_HOST_ID)?.getAttribute(SUMMARY_COLLAPSED_ATTR)).toBe('true');
     // The table is still in the DOM (so expansion is instant) but not rendered.
     const text = (root()?.textContent ?? '').replace(/\s+/g, ' ');
-    expect(text).toContain('本轮每题用时');
-    expect(text).toContain('共 2 题');
+    expect(text).toContain(t('summary.title'));
+    expect(text).toContain(t('summary.totalAll', { count: 2, total: '0:40' }));
   });
 
   it('toggles on a click of the header, and reports the new state', () => {
@@ -600,7 +605,7 @@ describe('SummaryView — collapse', () => {
     const seen: boolean[] = [];
     mount({ collapsed: false, onToggle: (c) => seen.push(c) });
     const button = toggle();
-    expect(button?.getAttribute('aria-label')).toBe('折叠用时明细');
+    expect(button?.getAttribute('aria-label')).toBe(t('summary.collapse'));
     button?.click();
     expect(seen).toEqual([true]);
   });
@@ -618,8 +623,8 @@ describe('SummaryView — collapse', () => {
     const view = mount({ collapsed: false });
     view.render({ collapsed: true, rows: [] });
     const text = (root()?.textContent ?? '').replace(/\s+/g, ' ');
-    expect(text).toContain('暂无数据');
-    expect(text).toContain('本轮没有记录到题目用时');
+    expect(text).toContain(t('summary.noData'));
+    expect(text).toContain(t('summary.empty'));
   });
 
   it('does not leak the toggle click to the page', () => {

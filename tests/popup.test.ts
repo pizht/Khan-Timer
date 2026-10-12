@@ -1,19 +1,27 @@
 /**
- * Popup "历史记录" section.
+ * Popup records section, and the language selector.
  *
  * Two rules are covered here:
  *  - The clear-all control is only rendered when there is something to clear:
  *    an empty panel must not offer a danger button that cannot do anything.
  *  - One-shot feedback appears in the card that owns the control (records vs.
- *    settings), so a clearing result is never reported inside 设置.
+ *    settings), so a clearing result is never reported inside the settings card.
  *
  * The real `public/popup.html` + `public/popup.css` are loaded here so the test
  * covers the shipped markup and stylesheet, not a hand-written fixture.
+ *
+ * Expected labels are asked for through `t()` rather than written out, so these
+ * tests describe the popup's behaviour instead of the language it happens to be
+ * rendering in. The one test that switches language on purpose compares against
+ * the Chinese catalog object directly, because at that point the popup's own
+ * module instance is the only thing that knows the new locale.
  */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getLocale, t } from '../src/i18n/index.js';
+import { zhCN } from '../src/i18n/zh-CN.js';
 import type { QuestionRecord } from '../src/types.js';
 
 // vitest serves modules over http in the jsdom environment, so resolve the
@@ -136,7 +144,7 @@ describe('popup records section', () => {
   it('hides the clear button when nothing has been saved', async () => {
     await bootPopup();
 
-    expect(countLabel()).toBe('已保存 0 条');
+    expect(countLabel()).toBe(t('popup.savedCount', { count: 0 }));
     expect(clearButton().hidden).toBe(true);
     expect(isVisible(clearButton())).toBe(false);
   });
@@ -145,7 +153,7 @@ describe('popup records section', () => {
     store = { records: { version: 1, records: [makeRecord()] } };
     await bootPopup();
 
-    expect(countLabel()).toBe('已保存 1 条');
+    expect(countLabel()).toBe(t('popup.savedCount', { count: 1 }));
     expect(clearButton().hidden).toBe(false);
     expect(isVisible(clearButton())).toBe(true);
   });
@@ -161,22 +169,24 @@ describe('popup records section', () => {
     await flush();
 
     expect(store['records']).toBeUndefined();
-    expect(countLabel()).toBe('已保存 0 条');
+    expect(countLabel()).toBe(t('popup.savedCount', { count: 0 }));
     expect(clearButton().hidden).toBe(true);
     expect(isVisible(clearButton())).toBe(false);
     expect(store['settings']).toEqual({ defaultMode: 'countdown', countdownLimitSeconds: 6 });
   });
 
-  it('reports a successful clear inside the records card, not in 设置', async () => {
+  it('reports a successful clear inside the records card, not in the settings card', async () => {
     store = { records: { version: 1, records: [makeRecord()] } };
     await bootPopup();
 
     clearButton().click();
     await flush();
 
-    expect(hint('records-hint').textContent).toBe('记录已清除');
+    expect(hint('records-hint').textContent).toBe(t('popup.cleared'));
     expect(isVisible(hint('records-hint'))).toBe(true);
-    expect(cardOf('records-hint')?.querySelector('h2')?.textContent).toBe('历史记录');
+    expect(cardOf('records-hint')?.querySelector('h2')?.textContent).toBe(
+      t('popup.recordsHeading'),
+    );
 
     // The settings card must stay silent: it has no idea what was cleared.
     expect(hint('save-hint').hidden).toBe(true);
@@ -196,14 +206,14 @@ describe('popup records section', () => {
     await flush();
 
     const records = hint('records-hint');
-    expect(records.textContent).toBe('清除失败：浏览器存储不可用');
+    expect(records.textContent).toBe(t('popup.clearFailed'));
     expect(isVisible(records)).toBe(true);
     expect(records.classList.contains('error')).toBe(true);
     // The error variant is actually styled, not just labelled.
     expect(CSS).toContain('.hint.error');
     expect(hint('save-hint').hidden).toBe(true);
     // A failed clear leaves the records (and the button) in place.
-    expect(countLabel()).toBe('已保存 1 条');
+    expect(countLabel()).toBe(t('popup.savedCount', { count: 1 }));
     expect(clearButton().hidden).toBe(false);
   });
 
@@ -216,9 +226,79 @@ describe('popup records section', () => {
     select.dispatchEvent(new Event('change'));
     await flush();
 
-    expect(hint('save-hint').textContent).toBe('保存失败：浏览器存储不可用');
+    expect(hint('save-hint').textContent).toBe(t('popup.saveFailed'));
     expect(isVisible(hint('save-hint'))).toBe(true);
-    expect(cardOf('save-hint')?.querySelector('h2')?.textContent).toBe('设置');
+    expect(cardOf('save-hint')?.querySelector('h2')?.textContent).toBe(t('popup.settingsHeading'));
     expect(hint('records-hint').hidden).toBe(true);
+  });
+});
+
+describe('popup language selector', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    store = {};
+    failWrite = false;
+    failRemove = false;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    document.head.innerHTML = '';
+    document.body.innerHTML = '';
+  });
+
+  const languageSelect = (): HTMLSelectElement => {
+    const node = document.getElementById('language');
+    if (!node) throw new Error('missing #language');
+    return node as HTMLSelectElement;
+  };
+
+  it('offers every shipped language plus "follow the browser"', async () => {
+    await bootPopup();
+
+    expect([...languageSelect().options].map((option) => option.value)).toEqual([
+      'auto',
+      'en',
+      'zh-CN',
+    ]);
+    // Nothing stored yet: the popup falls back to following the browser.
+    expect(languageSelect().value).toBe('auto');
+  });
+
+  it('re-letters the markup and stores the choice when the language changes', async () => {
+    await bootPopup();
+    const select = languageSelect();
+    expect(document.documentElement.lang).toBe(getLocale());
+
+    select.value = 'zh-CN';
+    select.dispatchEvent(new Event('change'));
+    await flush();
+
+    expect(store['settings']).toMatchObject({ language: 'zh-CN' });
+    // Markup that carries `data-i18n` is re-translated in place...
+    expect(document.querySelector('.status-label')?.textContent).toBe(zhCN['popup.statusLabel']);
+    expect(
+      document.querySelector('h2[data-i18n="popup.settingsHeading"]')?.textContent,
+    ).toBe(zhCN['popup.settingsHeading']);
+    expect(document.querySelector('[data-i18n="popup.clearRecords"]')?.textContent).toBe(
+      zhCN['popup.clearRecords'],
+    );
+    // ...the document language follows, so the browser can hyphenate and speak
+    // the page correctly...
+    expect(document.documentElement.lang).toBe('zh-CN');
+    // ...and text the popup builds from data is repainted rather than left behind
+    // in the previous language by the markup pass. Written out here on purpose:
+    // this is the assertion that a Chinese user really sees Chinese.
+    expect(document.getElementById('status-text')?.textContent).toBe('此标签页未运行计时器');
+    expect(countLabel()).toBe('已保存 0 条');
+  });
+
+  it('restores the previous language choice on the next open', async () => {
+    store = { settings: { language: 'zh-CN' } };
+    await bootPopup();
+
+    expect(languageSelect().value).toBe('zh-CN');
+    expect(document.querySelector('.status-label')?.textContent).toBe(zhCN['popup.statusLabel']);
+    expect(document.documentElement.lang).toBe('zh-CN');
   });
 });

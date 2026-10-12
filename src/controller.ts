@@ -25,6 +25,7 @@ import {
 import { OverlayView, type OverlayState } from './overlay.js';
 import { SummaryView, buildSummaryRows } from './summary-view.js';
 import { TimerEngine, formatDuration } from './timer-engine.js';
+import { render, setLocale, type MessageRef } from './i18n/index.js';
 import { disposeAudio, playExpiryTone } from './sound.js';
 import {
   chromeStorageArea,
@@ -99,8 +100,17 @@ export class ContentController {
   private recordsCount = 0;
   private tickTimer: number | null = null;
   private lastCheckpointAt = 0;
-  private lastEventText = '正在初始化…';
-  private warning: string | null = null;
+  /**
+   * What the panel's footer says about the last thing the detector did.
+   *
+   * Held as a message reference rather than as a finished string, and rendered
+   * whenever it is displayed: this text sits on screen for a long time, so a
+   * learner who changes the language in the popup must not be left reading the
+   * previous one until the next event happens to replace it.
+   */
+  private lastEvent: MessageRef = { key: 'event.initializing' };
+  /** Non-null while detection is degraded; see `warningText`. */
+  private warning: MessageRef | null = null;
   private diagnostics: DetectorDiagnostics = {
     regionFound: false,
     strategy: null,
@@ -189,10 +199,23 @@ export class ContentController {
    */
   private autoPausedForIdentity = false;
 
+  /** The last detector event, in the locale in force right now. */
+  private get lastEventText(): string {
+    return render(this.lastEvent);
+  }
+
+  /** The degradation warning, in the locale in force right now, or null. */
+  private get warningText(): string | null {
+    return this.warning === null ? null : render(this.warning);
+  }
+
   async init(): Promise<void> {
     this.area = chromeStorageArea();
     this.recordQueue = createRecordQueue(this.area);
     this.settings = await loadSettings(this.area);
+    // Resolve the language before anything is mounted or rendered, so the panel
+    // is born in the right one instead of being re-lettered a frame later.
+    setLocale(this.settings.language);
 
     const now = Date.now();
     this.recordsCount = (await loadRecords(this.area)).length;
@@ -283,7 +306,7 @@ export class ContentController {
           // for this question earlier. Only a POSITIONED question gets here, so
           // this is also the moment the clock starts for it.
           if (this.unidentified) {
-            this.lastEventText = '尚未开始计时：页面还没有报出这是第几题';
+            this.lastEvent = { key: 'event.noQuestionPosition' };
             break;
           }
           void this.beginQuestion(event.to, snapshot, event.at, true);
@@ -295,7 +318,7 @@ export class ContentController {
           // restarting it at zero.
           this.currentExerciseKey = exerciseKey;
           this.currentConfidence = snapshot.confidence;
-          this.lastEventText = '题目未变化，计时继续';
+          this.lastEvent = { key: 'event.sameQuestion' };
           break;
         }
         if (this.unidentified) {
@@ -320,7 +343,7 @@ export class ContentController {
           current.questionKey = event.to;
           current.stemFingerprint = snapshot.stemFingerprint ?? current.stemFingerprint;
           this.currentConfidence = snapshot.confidence;
-          this.lastEventText = '题目已按进度重新识别，计时继续';
+          this.lastEvent = { key: 'event.identityUpgraded' };
           void this.checkpoint(event.at, true);
           break;
         }
@@ -335,10 +358,10 @@ export class ContentController {
         break;
       }
       case 'same-question':
-        this.lastEventText = '题目未变化，计时继续';
+        this.lastEvent = { key: 'event.sameQuestion' };
         break;
       case 'pending':
-        this.lastEventText = '检测到可能的题目变化，等待确认…';
+        this.lastEvent = { key: 'event.pendingChange' };
         break;
       case 'uncertain':
         // Conservative degradation (spec 2.4): never reset or discard the time
@@ -347,9 +370,9 @@ export class ContentController {
         // question; the engine survives, so the question can still be finished
         // and still reaches the summary.
         this.warning = this.engine
-          ? `无法可靠识别当前题目（${event.reason}）。本题计时已暂停，重新识别到本题后会自动继续。`
-          : `未识别到题目（${event.reason}）。面板已隐藏，识别到题目后会自动开始计时。`;
-        this.lastEventText = '识别不确定，本题计时已暂停';
+          ? { key: 'warning.uncertainPaused', params: { reason: event.reason } }
+          : { key: 'warning.uncertainHidden', params: { reason: event.reason } };
+        this.lastEvent = { key: 'event.uncertain' };
         break;
     }
 
@@ -392,7 +415,7 @@ export class ContentController {
     // Automatic: the learner did not press 暂停, so `wasPaused` stays false.
     engine.pause(now, true);
     this.autoPausedForIdentity = true;
-    this.lastEventText = '未识别到题目，本题计时已暂停';
+    this.lastEvent = { key: 'event.unidentifiedPaused' };
     void this.checkpoint(now, true);
   }
 
@@ -413,7 +436,7 @@ export class ContentController {
     if (identityKeyOfEvent(event) !== engine.questionKey) return;
     engine.resume(now);
     this.autoPausedForIdentity = false;
-    this.lastEventText = '已重新识别到本题，继续计时';
+    this.lastEvent = { key: 'event.identityRestored' };
     void this.checkpoint(now, true);
   }
 
@@ -515,11 +538,8 @@ export class ContentController {
     this.unidentified = false;
     this.autoPausedForIdentity = false;
     this.seenQuestion = true;
-    this.warning =
-      snapshot.confidence === 'weak'
-        ? '题目识别仅依赖弱信号（进度标记），可能无法自动检测切题。请使用"重置本题"。'
-        : null;
-    this.lastEventText = restored ? '已恢复上次的计时' : '检测到新题目，计时开始';
+    this.warning = snapshot.confidence === 'weak' ? { key: 'warning.weakSignal' } : null;
+    this.lastEvent = { key: restored ? 'event.resumed' : 'event.started' };
     this.lastCheckpointAt = now;
     void saveSession(this.area, engine.serialize(now));
     this.render();
@@ -576,8 +596,7 @@ export class ContentController {
     const final = engine.finish(now, reason);
     this.pendingRecord = this.buildRecord(engine, final, now, reason);
     this.autoPausedForIdentity = false;
-    this.lastEventText =
-      reason === 'skipped' ? '已跳过，本题计时已停止' : '答对，本题计时已停止';
+    this.lastEvent = { key: reason === 'skipped' ? 'event.skipped' : 'event.answeredCorrect' };
     void this.checkpoint(now, true);
     this.render();
   }
@@ -667,13 +686,13 @@ export class ContentController {
       // The question is finished: its timing is final, so it becomes a record.
       void clearSession(this.area, engine.exerciseKey);
       void this.queueRecord(held);
-      this.lastEventText = '已切到别的练习，上一题用时已保存';
+      this.lastEvent = { key: 'event.switchedSaved' };
     } else {
       // Still being timed: freeze the clock and keep the session resumable.
       const frozen =
         engine.getPhase() === 'finished' ? engine.snapshot(now) : engine.finish(now, 'navigation');
       void saveSession(this.area, parkedSession(engine.serialize(now), frozen.elapsedMs, now));
-      this.lastEventText = '已切到别的练习，本题计时已暂存';
+      this.lastEvent = { key: 'event.switchedParked' };
     }
     this.render();
   }
@@ -718,11 +737,11 @@ export class ContentController {
     const now = Date.now();
     if (engine.getPhase() === 'paused') {
       engine.resume(now);
-      this.lastEventText = '已继续计时';
+      this.lastEvent = { key: 'event.resumedManual' };
     } else {
       // A learner-requested pause is never auto-resumed later.
       engine.pause(now);
-      this.lastEventText = '已暂停计时';
+      this.lastEvent = { key: 'event.pausedManual' };
     }
     this.autoPausedForIdentity = false;
     void this.checkpoint(now, true);
@@ -744,7 +763,7 @@ export class ContentController {
     this.skipInitiated = false;
     this.autoPausedForIdentity = false;
     this.warning = null;
-    this.lastEventText = '已重置本题计时';
+    this.lastEvent = { key: 'event.reset' };
     // Re-evaluate so a reset never looks like a question change.
     this.detector?.reevaluate('manual-reset');
     // Resetting restarts the clock; on a page that is still unrecognised that
@@ -884,7 +903,7 @@ export class ContentController {
     // Stop question tracking: there is no question on this screen.
     this.detector?.stop();
     this.warning = null;
-    this.lastEventText = '本轮已完成，已显示每题用时';
+    this.lastEvent = { key: 'event.summaryShown' };
 
     // Every row below is read from storage: make sure the record of the last
     // question (and any write still in flight, e.g. from parking another
@@ -907,7 +926,7 @@ export class ContentController {
 
     const host = this.findSummaryHost();
     if (!host) {
-      this.lastEventText = '本轮已完成，但未找到可插入用时的位置';
+      this.lastEvent = { key: 'event.summaryNoHost' };
       this.render();
       return;
     }
@@ -939,7 +958,7 @@ export class ContentController {
     this.skipInitiated = false;
     this.summaryRows = [];
     this.detector?.start();
-    this.lastEventText = '检测到新一轮答题';
+    this.lastEvent = { key: 'event.newAttempt' };
     this.render();
   }
 
@@ -1029,10 +1048,10 @@ export class ContentController {
     if (engine && engine.getPhase() === 'running') {
       const result = engine.tick(now);
       if (result.expiredJustNow && this.settings.soundEnabled) {
-        if (playExpiryTone()) this.lastEventText = '倒计时结束，已提示';
-        else this.lastEventText = '倒计时结束（提示音被浏览器阻止）';
+        if (playExpiryTone()) this.lastEvent = { key: 'event.countdownEndedTone' };
+        else this.lastEvent = { key: 'event.countdownEndedToneBlocked' };
       } else if (result.expiredJustNow) {
-        this.lastEventText = '倒计时结束';
+        this.lastEvent = { key: 'event.countdownEnded' };
       }
       if (now - this.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
         void this.checkpoint(now, false);
@@ -1117,7 +1136,7 @@ export class ContentController {
       questionKey: engine?.questionKey ?? null,
       progress: this.diagnostics.progress,
       confidence: this.diagnostics.confidence,
-      warning: this.warning,
+      warning: this.warningText,
       lastEvent: this.lastEventText,
       savedRecords: this.recordsCount,
     };
@@ -1157,7 +1176,7 @@ export class ContentController {
     if (!engine) return;
     const isFirst = engine.markFirstSubmission(at, 'unknown');
     if (isFirst) {
-      this.lastEventText = '已记录第一次提交时间';
+      this.lastEvent = { key: 'event.firstSubmission' };
       void this.checkpoint(Date.now(), true);
     }
     // The feedback area renders shortly after the click; read it once settled.
@@ -1167,8 +1186,10 @@ export class ContentController {
       const engineNow = this.engine;
       if (!engineNow) return;
       if (engineNow.setFirstSubmissionOutcome(outcome)) {
-        this.lastEventText =
-          outcome === 'correct' ? '第一次提交：正确' : '第一次提交：错误（已记录时间戳）';
+        this.lastEvent = {
+          key:
+            outcome === 'correct' ? 'event.firstSubmissionCorrect' : 'event.firstSubmissionIncorrect',
+        };
         void this.checkpoint(Date.now(), true);
         this.render();
       }
@@ -1212,7 +1233,7 @@ export class ContentController {
         if (clickedControl(target, SKIP_BUTTON) !== null) {
           // Only a *confirmed* skip stops the clock; see onProgressStateChange.
           this.skipInitiated = true;
-          this.lastEventText = '已点击跳过，等待确认…';
+          this.lastEvent = { key: 'event.skipClicked' };
           this.render();
           return;
         }
@@ -1269,6 +1290,16 @@ export class ContentController {
         if (!change) return;
         const previous = this.settings;
         this.settings = sanitizeSettings(change.newValue);
+        // A language change must reach everything already on screen. The panel
+        // and the summary card re-letter their own labels, and the event and
+        // warning text needs no special handling at all: both are stored as
+        // message references and are re-rendered from the catalog on every
+        // paint, so a stale translation cannot survive the switch.
+        if (previous.language !== this.settings.language) {
+          setLocale(this.settings.language);
+          this.overlay?.applyLanguage();
+          this.summaryView?.applyLanguage();
+        }
         this.detector?.configure({
           debounceMs: this.settings.detectionDebounceMs,
           cooldownMs: this.settings.detectionCooldownMs,
@@ -1291,8 +1322,12 @@ export class ContentController {
                 : null,
               now,
             );
-            this.lastEventText =
-              this.settings.defaultMode === 'countdown' ? '已切换为倒计时' : '已切换为正计时';
+            this.lastEvent = {
+              key:
+                this.settings.defaultMode === 'countdown'
+                  ? 'event.modeCountdown'
+                  : 'event.modeCountup',
+            };
             void this.checkpoint(now, true);
           }
         }
@@ -1329,7 +1364,7 @@ export class ContentController {
       savedRecords: records.length,
       recent: records.slice(-10),
       diagnostics: this.diagnostics,
-      warning: this.warning,
+      warning: this.warningText,
       lastEvent: this.lastEventText,
       // 识别：未识别 with the question's clock frozen. The panel is hidden in
       // this state, so this is how the learner finds out what happened.

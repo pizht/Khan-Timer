@@ -12,7 +12,9 @@
  *   - content scripts are restricted to khanacademy.org origins,
  *   - the shipped JavaScript contains no network APIs, no remote code and no
  *     dynamic code evaluation (spec 3.9, 6, 8.4),
- *   - icons are real PNGs at the declared sizes.
+ *   - icons are real PNGs at the declared sizes,
+ *   - the manifest's localised strings resolve against the default locale, so
+ *     the extension cannot ship in a state the browser refuses to load.
  *
  * Exit code is non-zero if any check fails.
  */
@@ -188,7 +190,61 @@ async function main() {
     );
   }
 
-  // 8. No stray build artefacts that would ship unnoticed.
+  // 8. Localisation: the manifest's __MSG_ placeholders must resolve.
+  //
+  // Both failure modes here are silent until someone installs the build:
+  // `_locales/` present without `default_locale` makes the browser REFUSE to load
+  // the extension, and a `__MSG_key__` with no matching entry renders as the
+  // literal placeholder text in the toolbar and on the Extensions page.
+  const defaultLocale = typeof manifest.default_locale === 'string' ? manifest.default_locale : null;
+  const hasLocales = await exists(path.join(DIST, '_locales'));
+  check(
+    'no _locales/ without default_locale',
+    !hasLocales || defaultLocale !== null,
+    hasLocales ? `default_locale=${defaultLocale}` : 'no _locales/ shipped',
+  );
+
+  const placeholderKeys = [
+    ...new Set(
+      [...manifestRaw.matchAll(/__MSG_([A-Za-z0-9_@]+)__/g)].map((match) => match[1]),
+    ),
+  ];
+  check(
+    'manifest name/description are localised',
+    hasLocales && placeholderKeys.length > 0,
+    `${placeholderKeys.length} placeholder(s): ${placeholderKeys.join(', ') || '(none)'}`,
+  );
+
+  if (defaultLocale !== null) {
+    const catalogRel = `_locales/${defaultLocale}/messages.json`;
+    let catalog = null;
+    try {
+      catalog = JSON.parse(await readFile(path.join(DIST, catalogRel), 'utf8'));
+      check(`dist/${catalogRel} parses`, true);
+    } catch (error) {
+      check(`dist/${catalogRel} parses`, false, error.message);
+    }
+    if (catalog !== null) {
+      const missing = placeholderKeys.filter(
+        (key) => typeof catalog[key]?.message !== 'string' || catalog[key].message.length === 0,
+      );
+      check(
+        `every __MSG_ key resolves in ${defaultLocale}`,
+        missing.length === 0,
+        missing.length ? `missing: ${missing.join(', ')}` : placeholderKeys.join(', '),
+      );
+      // The Chrome Web Store and Edge Add-ons both reject a listing description
+      // longer than 132 characters. Cheaper to catch here than at submission.
+      const description = catalog.extDesc?.message ?? '';
+      check(
+        'store description is within 132 characters',
+        [...description].length <= 132,
+        `${[...description].length} characters`,
+      );
+    }
+  }
+
+  // 9. No stray build artefacts that would ship unnoticed.
   const entries = await readdir(DIST, { recursive: true, withFileTypes: true });
   const unexpected = entries
     .filter((e) => e.isFile())
@@ -198,7 +254,9 @@ async function main() {
         REQUIRED_FILES.includes(rel) ||
         rel.endsWith('.js.map') ||
         rel === 'content.js.map' ||
-        rel === 'popup.js.map';
+        rel === 'popup.js.map' ||
+        // One localisation catalog per shipped language (see `src/i18n/`).
+        /^_locales\/[A-Za-z0-9_-]+\/messages\.json$/.test(rel);
       return !allowed;
     });
   check('no unexpected files in dist/', unexpected.length === 0, unexpected.join(', '));

@@ -11,11 +11,13 @@
 
 import type {
   ActiveRun,
+  LanguageSetting,
   QuestionRecord,
   Settings,
   StoredRecords,
   TimerSerialized,
 } from './types.js';
+import { isLocale } from './i18n/index.js';
 import { clampNumber, isRecord, toBoolean } from './util.js';
 
 /** Newest-last cap on retained records; older records are dropped. */
@@ -35,6 +37,7 @@ export interface StorageArea {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  language: 'auto',
   defaultMode: 'countup',
   countdownLimitSeconds: 60,
   soundEnabled: true,
@@ -86,6 +89,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   const anchor = source['overlayPosition'];
 
   return {
+    language: sanitizeLanguage(source['language']),
     defaultMode: mode === 'countdown' ? 'countdown' : 'countup',
     countdownLimitSeconds: Math.round(
       clampNumber(source['countdownLimitSeconds'], 5, 3600, DEFAULT_SETTINGS.countdownLimitSeconds),
@@ -104,6 +108,17 @@ export function sanitizeSettings(raw: unknown): Settings {
       clampNumber(source['detectionCooldownMs'], 0, 10000, DEFAULT_SETTINGS.detectionCooldownMs),
     ),
   };
+}
+
+/**
+ * Coerce the stored language into a valid setting.
+ *
+ * Anything unrecognised — including a `Settings` object written by a version
+ * that predates the language setting, where the key is simply absent — becomes
+ * `auto`, so no migration pass is needed and an old profile keeps working.
+ */
+function sanitizeLanguage(raw: unknown): LanguageSetting {
+  return isLocale(raw) ? raw : 'auto';
 }
 
 function sanitizePosition(raw: unknown): Settings['overlayPosition'] {

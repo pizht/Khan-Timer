@@ -659,6 +659,42 @@ async function finishPractice(cdp, label) {
   return Boolean((await cdp.evaluate(PAGE_KIND))?.summary);
 }
 
+/**
+ * Pin the interface language for this run.
+ *
+ * The extension renders in the language the learner chose (by default the
+ * browser's), and every label this script asserts on — 「第 N 题」, 「数据缺失」,
+ * 「加试」, 「暂停 0:17」 — is the Chinese one. Rather than hoping the browser's UI
+ * language matches, the setting is written through the extension's own storage
+ * before practice A is opened, so the content script reads it on its first load.
+ */
+async function pinLanguage(locale = 'zh-CN') {
+  const id = unpackedExtensionId(DIST);
+  let popup = null;
+  try {
+    popup = await openTarget(`chrome-extension://${id}/popup.html`);
+    const written = await popup.evaluate(
+      `new Promise((resolve) => {
+         if (typeof chrome === 'undefined' || !chrome.storage) { resolve(false); return; }
+         chrome.storage.local.get('settings', (all) => {
+           const settings = Object.assign({}, all && all.settings, { language: ${JSON.stringify(locale)} });
+           chrome.storage.local.set({ settings }, () => resolve(true));
+         });
+       })`,
+    );
+    note(`interface language pinned to ${locale}: ${written ? 'ok' : 'FAILED'}`);
+    return written === true;
+  } catch (error) {
+    note(`could not pin the interface language: ${error.message}`);
+    return false;
+  } finally {
+    // The popup polls the active tab every second; nothing needs it any more.
+    if (popup?.targetId) {
+      await fetch(`http://127.0.0.1:${PORT}/json/close/${popup.targetId}`).catch(() => undefined);
+    }
+  }
+}
+
 async function readStored() {
   const id = unpackedExtensionId(DIST);
   const url = `chrome-extension://${id}/popup.html`;
@@ -783,6 +819,16 @@ async function main() {
     const cdp = new Cdp(ws);
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
+
+    // Every label asserted below is a Chinese one: pin the extension's language
+    // before any practice is opened. The browser flag alone is not enough here,
+    // because a login run reuses a profile that may carry its own locale.
+    const languagePinned = await pinLanguage();
+    check(
+      'the interface language could be pinned for this run',
+      languagePinned,
+      'written to chrome.storage.local as settings.language',
+    );
 
     if (cookies) {
       await cdp.send('Network.enable');

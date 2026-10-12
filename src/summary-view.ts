@@ -29,6 +29,7 @@
 
 import type { EndReason, QuestionRecord, SummaryRow } from './types.js';
 import { formatDuration } from './timer-engine.js';
+import { t } from './i18n/index.js';
 
 /** Id of the host element carrying the summary card. */
 export const SUMMARY_HOST_ID = 'khan-academy-timer-summary';
@@ -325,10 +326,14 @@ export interface SummaryViewCallbacks {
  * doing both printed "加试" twice.
  */
 function tagFor(row: SummaryRow): { text: string; className: string } | null {
-  if (row.skipped) return { text: '已跳过', className: 'tag skipped' };
-  if (row.timedOut) return { text: '超时', className: 'tag expired' };
-  if (row.firstSubmissionOutcome === 'correct') return { text: '答对', className: 'tag correct' };
-  if (row.firstSubmissionOutcome === 'incorrect') return { text: '答错', className: 'tag incorrect' };
+  if (row.skipped) return { text: t('summary.tagSkipped'), className: 'tag skipped' };
+  if (row.timedOut) return { text: t('summary.tagTimedOut'), className: 'tag expired' };
+  if (row.firstSubmissionOutcome === 'correct') {
+    return { text: t('summary.tagCorrect'), className: 'tag correct' };
+  }
+  if (row.firstSubmissionOutcome === 'incorrect') {
+    return { text: t('summary.tagIncorrect'), className: 'tag incorrect' };
+  }
   return null;
 }
 
@@ -358,6 +363,7 @@ interface Refs {
   card: HTMLDivElement;
   head: HTMLDivElement;
   toggle: HTMLButtonElement;
+  title: HTMLHeadingElement;
   total: HTMLSpanElement;
   body: HTMLDivElement;
 }
@@ -395,7 +401,7 @@ export class SummaryView {
     card.innerHTML = `
       <div class="head" data-role="head">
         <button class="toggle" data-role="toggle" type="button">${CHEVRON_SVG}</button>
-        <h2 class="title">本轮每题用时</h2>
+        <h2 class="title" data-role="title">${t('summary.title')}</h2>
         <span class="total" data-role="total"></span>
       </div>
       <div class="body" data-role="body"></div>
@@ -413,6 +419,7 @@ export class SummaryView {
       card,
       head: q('head') as unknown as HTMLDivElement,
       toggle: q('toggle') as unknown as HTMLButtonElement,
+      title: q('title') as unknown as HTMLHeadingElement,
       total: q('total') as unknown as HTMLSpanElement,
       body: q('body') as unknown as HTMLDivElement,
     };
@@ -458,8 +465,25 @@ export class SummaryView {
     refs.card.classList.toggle('collapsed', this.collapsed);
     refs.host.setAttribute(SUMMARY_COLLAPSED_ATTR, String(this.collapsed));
     refs.toggle.setAttribute('aria-expanded', String(!this.collapsed));
-    refs.toggle.setAttribute('aria-label', this.collapsed ? '展开用时明细' : '折叠用时明细');
-    refs.toggle.title = this.collapsed ? '展开用时明细' : '折叠用时明细';
+    const label = this.collapsed ? t('summary.expand') : t('summary.collapse');
+    refs.toggle.setAttribute('aria-label', label);
+    refs.toggle.title = label;
+  }
+
+  /**
+   * Re-render the card in the locale now in force.
+   *
+   * Every string on the card is looked up while rendering, so a `refresh()` is
+   * enough to move an already-visible card to the new language; the title and the
+   * collapse control's accessible name are not part of the rows and are set
+   * here.
+   */
+  applyLanguage(): void {
+    const refs = this.refs;
+    if (!refs) return;
+    refs.title.textContent = t('summary.title');
+    this.applyCollapsed();
+    this.refresh();
   }
 
   render(input: SummaryRenderInput): void {
@@ -474,13 +498,16 @@ export class SummaryView {
     refs.total.textContent =
       rows.length > 0
         ? timed === rows.length
-          ? `共 ${rows.length} 题 · 合计 ${formatDuration(totalMs)}`
-          : `共 ${rows.length} 题 · ${timed} 题有数据 · 合计 ${formatDuration(totalMs)}`
-        : '暂无数据';
+          ? t('summary.totalAll', { count: rows.length, total: formatDuration(totalMs) })
+          : t('summary.totalPartial', {
+              count: rows.length,
+              timed,
+              total: formatDuration(totalMs),
+            })
+        : t('summary.noData');
 
     if (rows.length === 0) {
-      refs.body.innerHTML =
-        '<p class="empty">本轮没有记录到题目用时。请确认在答题时悬浮面板处于显示状态。</p>';
+      refs.body.innerHTML = `<p class="empty">${t('summary.empty')}</p>`;
       this.applyCollapsed();
       return;
     }
@@ -488,13 +515,14 @@ export class SummaryView {
     const bodyRows = rows
       .map((row) => {
         const number = row.questionNumber === null ? '—' : String(row.questionNumber);
+        const label = t('summary.questionNumber', { number });
         // A question the exercise has but this attempt never timed. Its number is
         // kept and the time cell says so, instead of the next question's time
         // sliding up into this row.
         if (row.missing) {
           return `
           <tr class="missing-row">
-            <td class="num">第 ${number} 题<span class="tag missing">数据缺失</span></td>
+            <td class="num">${label}<span class="tag missing">${t('summary.tagMissing')}</span></td>
             <td class="dur">—</td>
           </tr>
         `;
@@ -502,12 +530,16 @@ export class SummaryView {
         const tag = tagFor(row);
         const paused =
           row.pausedMs >= 1000
-            ? `<div class="muted">暂停 ${escapeHtml(formatDuration(row.pausedMs))}</div>`
+            ? `<div class="muted">${escapeHtml(
+                t('summary.paused', { duration: formatDuration(row.pausedMs) }),
+              )}</div>`
             : '';
-        const bonusTag = row.bonus ? '<span class="tag bonus">加试</span>' : '';
+        const bonusTag = row.bonus
+          ? `<span class="tag bonus">${t('summary.tagBonus')}</span>`
+          : '';
         return `
           <tr>
-            <td class="num">第 ${number} 题${bonusTag}${tag ? `<span class="${tag.className}">${tag.text}</span>` : ''}</td>
+            <td class="num">${label}${bonusTag}${tag ? `<span class="${tag.className}">${tag.text}</span>` : ''}</td>
             <td class="dur">${escapeHtml(formatDuration(row.durationMs))}${paused}</td>
           </tr>
         `;
@@ -517,13 +549,11 @@ export class SummaryView {
     refs.body.innerHTML = `
       <table>
         <thead>
-          <tr><th>题目</th><th class="dur">用时</th></tr>
+          <tr><th>${t('summary.colQuestion')}</th><th class="dur">${t('summary.colDuration')}</th></tr>
         </thead>
         <tbody>${bodyRows}</tbody>
       </table>
-      <p class="note">${escapeHtml(
-        input.storageNote ?? '用时数据只保存在本机浏览器中，不会上传到任何服务器。',
-      )}</p>
+      <p class="note">${escapeHtml(input.storageNote ?? t('summary.storageNote'))}</p>
     `;
     this.applyCollapsed();
   }

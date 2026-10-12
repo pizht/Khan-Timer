@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Khan Academy Timer",
+    "description": "Extension name shown in the browser UI and in the stores. A product name, so it is not translated."
+  },
+  "extDesc": {
+    "message": "Question timer for Khan Academy exercises and quizzes: automatic question detection, count up or countdown, local-only records.",
+    "description": "Extension description shown on the Extensions page and in the store listing. Keep it under 132 characters."
+  }
+}

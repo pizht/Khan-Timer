@@ -65,6 +65,7 @@ pnpm run verify
 | **第一次提交时间戳** | 记录第一次提交答案的时刻与其对错（需求 2.4） |
 | **悬浮面板** | Shadow DOM 隔离，可拖动、可折叠为小胶囊，不遮挡答题区 |
 | **历史记录** | 保存在本机，可查看最近记录、可一键清除 |
+| **英文 / 简体中文界面** | 两套界面文案；默认跟随浏览器语言，也可在弹出面板里固定为某一种。切换后弹出面板与页面内面板立即改文案，扩展名与描述由 `_locales` 本地化。见 [`docs/i18n.md`](docs/i18n.md) |
 | **关闭页面后续接** | 重新打开同一题时，接着之前的用时继续计时 |
 | **识别：未识别时暂停并隐藏面板** | 页面给不出可用的题目标识时（面板的「识别：未识别」）**不显示计时面板**，并把本题计时**暂停**；重新识别到**同一道题**时从暂停处继续，这段无法识别的时间不计入本题。已累计的用时与记录都保留，本题仍会出现在结束页的用时统计里 |
 
@@ -122,6 +123,7 @@ pnpm run build
 
 | 设置项 | 默认值 | 说明 |
 |---|---|---|
+| **语言** | 跟随浏览器 | 界面语言：`跟随浏览器` / `English` / `中文（简体）`。`跟随浏览器` 时按浏览器界面语言解析：`zh*` → 简体中文，`en*` → 英文，其它语言一律回落英文。选具体语言后弹出面板与页面内面板立即改文案，不必重启浏览器。 |
 | **默认计时模式** | 正计时 | 新题开始时使用的模式。正计时记录用时；倒计时按限时倒数。 |
 | **每题限时（秒）** | 60 | 倒计时模式的限时。允许 5–3600 秒。 |
 | **倒计时归零时播放提示音** | 开 | 用 Web Audio 现场合成两声短音。若浏览器因未交互而阻止音频，会静默跳过并在面板说明。 |
@@ -134,6 +136,22 @@ pnpm run build
 弹出面板始终显示当前页面的实时状态与**题目进度**；打开**开发者模式**后，
 额外显示识别诊断（命中的选择器策略、识别置信度、题目指纹、最近事件、完整诊断文本），
 便于判断某页面是否被可靠识别。
+
+### 语言（多语言）
+
+界面文案有两套：**英文（`en`）** 与 **简体中文（`zh-CN`）**。
+
+- **英文是默认语言，也是兜底语言**：目标用户以英语母语者为主，因此 `en.ts` 是消息键的
+  **唯一真源**，也是任何缺失翻译的回落目标；`_locales/en` 是 manifest 的默认语言。
+- **跟随浏览器**（默认）时按浏览器界面语言解析：`zh*` → 简体中文，`en*` → 英文，
+  其它语言（`ja`、`de`…）一律回落英文。想让英文用户看到英文、中文用户看到中文，
+  不需要任何设置。
+- 也可以在弹出面板的 `语言` 里**固定**一种：选择后弹出面板、页面内悬浮面板、
+  结束页卡片都会**立即**改文案（正在打开的页面不必刷新）。
+- 扩展名与描述由 `public/_locales/` 本地化，那是浏览器扩展管理页与商店显示的两行字；
+  商店列表本身的名称/描述要在开发者后台单独填。
+- **新增一种语言**（例如日语）只需三步，且漏译会被编译拦住：细节见
+  [`docs/i18n.md`](docs/i18n.md)。
 
 ### 悬浮面板
 
@@ -398,7 +416,7 @@ pnpm run test            # vitest run
 pnpm run test:watch      # vitest 监听
 pnpm run icons           # 从 assets/logo.png 重新生成图标 PNG
 pnpm run verify          # typecheck + test + build + dist 检查
-pnpm run verify:edge     # 真实 Edge 端到端验证（67 项）
+pnpm run verify:edge     # 真实 Edge 端到端验证（67 项 + 语言相关 6 项）
 pnpm run verify:all      # 上面两个一起跑
 ```
 
@@ -506,7 +524,7 @@ pnpm run test
 node scripts/verify-dist.mjs
 ```
 
-**56 项检查**，把若干验收标准变成机器校验：
+**61 项检查**，把若干验收标准变成机器校验：
 
 - `manifest.json` 可解析、是 Manifest V3、必填字段齐全；
 - manifest 引用的每个文件都真实存在；
@@ -517,7 +535,9 @@ node scripts/verify-dist.mjs
   `sendBeacon` / `eval` / `new Function` / `importScripts` / 动态插入 script /
   外部 http(s) 地址 —— 这是「没有计时数据上传、没有远程代码」的机器证明；
 - 图标是真实 PNG 且尺寸与声明一致；
-- `dist/` 中没有意料之外的文件。
+- **多语言清单可用**：有 `_locales/` 就必须声明 `default_locale`（否则浏览器拒绝加载），
+  manifest 里每个 `__MSG_*__` 都能在默认语言里解析出非空文案，且商店描述不超过 132 字符；
+- `dist/` 中没有意料之外的文件（`_locales/<语言>/messages.json` 属于意料之内）。
 
 ### 2.5 真实站点上复现「切换练习」（`scripts/verify-practice-switch.mjs`）
 
@@ -575,17 +595,23 @@ inconclusive，因此总数会略有浮动），包括：面板注入与 Shadow 
 | `scripts/verify-dist.mjs` | **56 / 56 通过** |
 | `scripts/verify-extension.mjs` | **74 / 74 通过**（另有 1 项因该轮没有加试题而无法判定，会明确标为 inconclusive，既不计通过也不计失败） |
 
-> 上面是那一轮的端到端验证记录。此后又新增了四批回归用例：
+> 上面是那一轮的端到端验证记录。此后又新增了五批回归用例：
 > 「切换练习」与「结束页题号模型」（`tests/controller.test.ts`）、
 > 「识别：未识别」（`tests/timer-engine.test.ts`、`tests/question-detector.test.ts`、
 > `tests/controller.test.ts`）、「记录写入队列 / 按练习取数」
 > （`tests/storage.test.ts`）与「行序模型」（`tests/summary-view.test.ts`），
 > 以及「面板只在确认做题时出现」（同一批 `tests/controller.test.ts` +
 > `tests/question-detector.test.ts` 的 `isPositionedQuestionKey`），
-> 用例总数变为 **247**；当前在本机重跑的结果为
-> `tsc --noEmit` 通过、`vitest run` **247 / 247**（7 个文件全绿）、
-> `verify-dist.mjs` **56 / 56**、`scripts/verify-startcard-flash.mjs` **10 / 10**（真实 Edge），
+> 加上**多语言**（`tests/i18n.test.ts`，另有 `tests/popup.test.ts` 的语言选择器三条、
+> `tests/overlay.test.ts` 的面板改文案一条），
+> 用例总数变为 **270**；当前在本机重跑的结果为
+> `tsc --noEmit` 通过、`vitest run` **270 / 270**（8 个文件全绿）、
+> `verify-dist.mjs` **61 / 61**、`scripts/verify-startcard-flash.mjs` **10 / 10**（真实 Edge），
 > 均无既存失败。
+> （多语言这一批里，`tests/popup.test.ts` 与 `tests/overlay.test.ts` 的既有断言
+> 改成对着消息目录断言，因此不再和界面语言绑死；真实 Edge 的两个端到端脚本改为
+> **固定中文**运行 —— `verify-extension.mjs` 用 `--lang=zh-CN` 加扩展自身的
+> `language` 设置，`verify-practice-switch.mjs` 用同一份设置，因为它们读的都是中文文案。）
 > （弹出面板那张卡片原先页面写「历史记录」、测试与文档写「本地记录」，两边不一致导致
 > 一个既有用例长期失败；现在统一为**「历史记录」**：页面、`tests/popup.test.ts`、
 > README、`docs/compatibility.md` 全部改成同一个词，用例因此通过。）
@@ -704,6 +730,11 @@ khan-academy-timer/
 │   ├── site-profile.ts        # ★ 全部站点选择器与适配规则集中于此
 │   ├── overlay.ts             # 页面内悬浮面板（Shadow DOM）
 │   ├── summary-view.ts        # 结束页的「本轮每题用时」卡片（Shadow DOM）
+│   ├── i18n/                  # ★ 全部界面文案：en.ts 是键的真源，zh-CN.ts 是译文
+│   │   ├── en.ts              #   英文目录（真源 + 兜底语言，MessageKey 由它派生）
+│   │   ├── zh-CN.ts           #   简体中文译文（少一个键就编译不过）
+│   │   ├── index.ts           #   t() / setLocale() / 语言解析 / 复数选择
+│   │   └── dom.ts             #   把 popup.html 里的 data-i18n 节点翻成当前语言
 │   ├── storage.ts             # 本地设置、记录与会话
 │   ├── sound.ts               # 超时提示音（Web Audio 合成）
 │   ├── controller.ts          # 计时协调器：识别事件 → 计时 / 记录 / 会话
@@ -714,13 +745,14 @@ khan-academy-timer/
 │   └── logo.png               # ★ 项目 logo 原图（满幅蓝底方形，1254×1254）
 ├── public/
 │   ├── manifest.json
+│   ├── _locales/              # ★ 扩展名与描述的本地化（en 为默认语言，zh_CN 为译文）
 │   ├── popup.html / popup.css
 │   └── icons/                 # 由 scripts/make-icons.mjs 从 assets/logo.png 生成
-├── tests/                     # vitest 单元测试（7 个文件，247 个用例）
+├── tests/                     # vitest 单元测试（8 个文件，270 个用例）
 ├── scripts/
 │   ├── build.mjs              # esbuild 打包到 dist/
-│   ├── verify-dist.mjs        # 构建产物机器校验（56 项）
-│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（67 项）
+│   ├── verify-dist.mjs        # 构建产物机器校验（61 项，含多语言清单检查）
+│   ├── verify-extension.mjs   # 真实 Edge 端到端验证（67 项 + 语言相关 6 项）
 │   ├── verify-practice-switch.mjs   # 真实 Edge：切练习 / 回到原练习做完整轮
 │   ├── verify-startcard-flash.mjs   # 真实 Edge：起始页不闪面板 + 第 1 题无暂停用时（10 项）
 │   └── make-icons.mjs         # 生成 PNG 图标（只用 Node 内置模块）
@@ -734,6 +766,7 @@ khan-academy-timer/
 │   └── tools/                 # 可复现的采集与脱敏脚本
 ├── docs/
 │   ├── compatibility.md       # 已验证页面类型与人工测试结果
+│   ├── i18n.md                # ★ 多语言方案：目录结构、语言解析、新增语言步骤
 │   └── known-limitations.md   # 已知限制清单
 ├── dist/                      # 构建输出，Edge 加载这个目录
 ├── package.json
@@ -848,6 +881,7 @@ exercise-progress-<索引>-<状态>[-current]
 
 - 已验证支持的页面类型、人工测试结果：**[`docs/compatibility.md`](docs/compatibility.md)**
 - 已知限制与未验证场景：**[`docs/known-limitations.md`](docs/known-limitations.md)**
+- 多语言方案与新增语言步骤：**[`docs/i18n.md`](docs/i18n.md)**
 
 一句话总结：**只承诺已在真实 Edge 上驱动验证过的页面类型**。
 其他练习/测验页面会尝试识别；识别不可靠时会明确提示，而不会假装正常工作。

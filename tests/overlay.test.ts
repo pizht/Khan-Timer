@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { OverlayView, type OverlayState } from '../src/overlay.js';
 import { OVERLAY_HOST_ID } from '../src/question-detector.js';
 import { DEFAULT_SETTINGS } from '../src/storage.js';
+import { setLocale, t } from '../src/i18n/index.js';
 import type { Settings } from '../src/types.js';
 
 const noop = (): void => undefined;
@@ -28,7 +29,7 @@ function makeState(): OverlayState {
     progress: '2 of 5',
     confidence: 'stable-id',
     warning: null,
-    lastEvent: '检测到新题目，计时开始',
+    lastEvent: t('event.started'),
     savedRecords: 2,
   };
 }
@@ -57,9 +58,11 @@ describe('overlay: 开发者模式 gating', () => {
     const root = mountOverlay({ developerMode: false });
 
     const meta = root.querySelector('[data-role="meta"]') as HTMLElement;
-    expect(meta.textContent).toContain('进度');
+    expect(meta.textContent).toContain(t('overlay.metaProgress'));
     expect(meta.textContent).toContain('2 of 5');
-    expect(meta.textContent).not.toContain('识别：');
+    // Asserted by class rather than by text: the chip is what must be absent,
+    // whatever language its label would have been in.
+    expect(meta.querySelector('.confidence-stable-id')).toBeNull();
 
     const foot = root.querySelector('[data-role="foot"]') as HTMLElement;
     expect(foot.hidden).toBe(true);
@@ -69,13 +72,17 @@ describe('overlay: 开发者模式 gating', () => {
     const root = mountOverlay({ developerMode: true });
 
     const meta = root.querySelector('[data-role="meta"]') as HTMLElement;
-    expect(meta.textContent).toContain('进度');
-    expect(meta.textContent).toContain('识别：题目ID');
+    expect(meta.textContent).toContain(t('overlay.metaProgress'));
+    const chip = meta.querySelector('.confidence-stable-id');
+    expect(chip?.textContent).toContain(t('overlay.confidenceStableId'));
+    expect(meta.textContent).toContain(
+      t('overlay.metaConfidence', { level: t('overlay.confidenceStableId') }),
+    );
 
     const foot = root.querySelector('[data-role="foot"]') as HTMLElement;
     expect(foot.hidden).toBe(false);
-    expect(foot.textContent).toContain('检测到新题目，计时开始');
-    expect(foot.textContent).toContain('已记录 2');
+    expect(foot.textContent).toContain(t('event.started'));
+    expect(foot.textContent).toContain(t('overlay.savedRecords', { count: 2 }));
   });
 
   it('reacts to the setting changing while the panel is open', () => {
@@ -91,5 +98,39 @@ describe('overlay: 开发者模式 gating', () => {
     // The progress chip is not affected by any of this.
     const meta = root.querySelector('[data-role="meta"]') as HTMLElement;
     expect(meta.textContent).toContain('2 of 5');
+  });
+
+  it('re-letters an open panel when the language changes', () => {
+    const root = mountOverlay();
+    const text = (role: string): string =>
+      (root.querySelector(`[data-role="${role}"]`) as HTMLElement).textContent ?? '';
+
+    expect(text('title')).toBe(t('app.timerTitle'));
+    expect(text('pause')).toBe(t('overlay.pause'));
+
+    try {
+      setLocale('zh-CN');
+      view?.applyLanguage();
+
+      // Labels baked into the shadow DOM at mount...
+      expect(text('title')).toBe('题目计时');
+      expect(text('pause')).toBe('暂停');
+      expect(text('reset')).toBe('重置本题');
+      // The collapse control draws a glyph; its label is the accessible name.
+      const collapse = root.querySelector('[data-role="collapse"]');
+      expect(collapse?.getAttribute('title')).toBe('折叠面板');
+      expect(collapse?.getAttribute('aria-label')).toBe('折叠面板');
+      // ...and the two badges the stylesheet draws with `content:`, which cannot
+      // be reached by touching text nodes at all.
+      const css = (root.querySelector('style') as HTMLStyleElement).textContent ?? '';
+      expect(css).toContain('已完成');
+      expect(css).toContain('已暂停');
+    } finally {
+      setLocale('auto');
+      view?.applyLanguage();
+    }
+
+    expect(text('title')).toBe(t('app.timerTitle'));
+    expect(text('pause')).toBe(t('overlay.pause'));
   });
 });

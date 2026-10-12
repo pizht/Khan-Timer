@@ -22,6 +22,7 @@ import type {
   TimerPhase,
 } from './types.js';
 import { formatDuration } from './timer-engine.js';
+import { t } from './i18n/index.js';
 import { OVERLAY_HOST_ID } from './question-detector.js';
 
 export interface OverlayState {
@@ -52,7 +53,17 @@ export interface OverlayCallbacks {
   onPositionChange: (position: OverlayPosition) => void;
 }
 
-const SHADOW_CSS = `
+/**
+ * The shadow root's stylesheet.
+ *
+ * Built per mount rather than held as a constant because two of its rules carry
+ * COPY, not just styling: the "done" / "paused" badges are drawn by
+ * `.readout::after`, so their text comes from the message catalog. The values
+ * are quoted through `JSON.stringify`, which is both valid CSS string syntax and
+ * the only way a translation containing a quote can break out of the rule.
+ */
+function shadowCss(): string {
+  return `
 :host { all: initial; }
 * { box-sizing: border-box; }
 .panel {
@@ -133,10 +144,10 @@ const SHADOW_CSS = `
 .status-paused .time { color: #8a6d1f; }
 .status-finished .time { color: #1a7f4b; }
 .status-finished .readout::after {
-  content: "已完成"; font-size: 11px; font-weight: 700; color: #1a7f4b;
+  content: ${JSON.stringify(t('overlay.statusFinished'))}; font-size: 11px; font-weight: 700; color: #1a7f4b;
 }
 .status-paused .readout::after {
-  content: "已暂停"; font-size: 11px; font-weight: 700; color: #8a6d1f;
+  content: ${JSON.stringify(t('overlay.statusPaused'))}; font-size: 11px; font-weight: 700; color: #8a6d1f;
 }
 .status-expired .time { color: #c0392b; }
 .status-expired .panel-time-row { animation: pulse 1s ease-in-out infinite; }
@@ -184,13 +195,16 @@ const SHADOW_CSS = `
 .pill.expired .dot { background: #c0392b; animation: pulse 1s ease-in-out infinite; }
 .pill.finished .dot { background: #1a7f4b; }
 `;
+}
 
 interface Refs {
   host: HTMLElement;
   root: ShadowRoot;
+  style: HTMLStyleElement;
   panel: HTMLDivElement;
   head: HTMLDivElement;
   body: HTMLDivElement;
+  title: HTMLSpanElement;
   time: HTMLSpanElement;
   modeTag: HTMLSpanElement;
   meta: HTMLDivElement;
@@ -233,24 +247,24 @@ export class OverlayView {
     const root = host.attachShadow({ mode: 'open' });
 
     const style = document.createElement('style');
-    style.textContent = SHADOW_CSS;
+    style.textContent = shadowCss();
 
     const panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML = `
       <div class="head" data-role="head">
-        <span class="title">题目计时</span>
-        <button class="icon-btn" data-role="collapse" type="button" title="折叠面板" aria-label="折叠面板">–</button>
+        <span class="title" data-role="title">${t('app.timerTitle')}</span>
+        <button class="icon-btn" data-role="collapse" type="button" title="${t('overlay.collapse')}" aria-label="${t('overlay.collapse')}">–</button>
       </div>
       <div class="body" data-role="body">
         <div class="readout panel-time-row">
           <span class="time" data-role="time">0:00</span>
-          <span class="mode-tag" data-role="mode">正计时</span>
+          <span class="mode-tag" data-role="mode">${t('mode.countup')}</span>
         </div>
         <div class="meta" data-role="meta"></div>
         <div class="actions">
-          <button class="btn primary" data-role="pause" type="button">暂停</button>
-          <button class="btn" data-role="reset" type="button">重置本题</button>
+          <button class="btn primary" data-role="pause" type="button">${t('overlay.pause')}</button>
+          <button class="btn" data-role="reset" type="button">${t('overlay.reset')}</button>
         </div>
         <div class="warning" data-role="warning" hidden></div>
         <div class="foot" data-role="foot">
@@ -278,9 +292,11 @@ export class OverlayView {
     this.refs = {
       host,
       root,
+      style,
       panel,
       head: q('head') as unknown as HTMLDivElement,
       body: q('body') as unknown as HTMLDivElement,
+      title: q('title'),
       time: q('time'),
       modeTag: q('mode'),
       meta: q('meta') as unknown as HTMLDivElement,
@@ -335,12 +351,47 @@ export class OverlayView {
     // next render tick.
     this.refs.foot.hidden = !settings.developerMode;
     this.refs.collapseBtn.textContent = collapsed ? '+' : '–';
-    this.refs.collapseBtn.title = collapsed ? '展开面板' : '折叠面板';
-    this.refs.collapseBtn.setAttribute('aria-label', collapsed ? '展开面板' : '折叠面板');
+    this.applyLabels();
     // Visibility is deliberately NOT set from `settings.overlayVisible` here:
     // the controller decides it from whether a question is being timed, so that
     // changing a setting cannot flash the panel onto a page with no question.
     this.applyPosition(settings.overlayPosition);
+  }
+
+  /**
+   * Re-render the labels that are not derived from timer state, in the locale
+   * now in force.
+   *
+   * Called when the learner changes the language in the popup. These labels are
+   * the ones baked into the shadow DOM when the panel was mounted (the title, the
+   * collapse control's accessible name) plus the two status badges the
+   * stylesheet draws with `content:` — without this they would keep the language
+   * the page was loaded with. The clock, the mode tag and the footer need no
+   * help: `render()` looks every string up in the catalog on each call, and the
+   * controller re-renders on its next tick.
+   */
+  applyLanguage(): void {
+    if (!this.refs) return;
+    this.refs.style.textContent = shadowCss();
+    this.applyLabels();
+    if (this.state) this.render(this.state);
+  }
+
+  /**
+   * Every label the panel bakes in at mount, re-applied on demand.
+   *
+   * The clock, the mode tag, the pause control and the footer are NOT here:
+   * `render()` looks those up in the catalog on every call, and the controller
+   * re-renders on each tick.
+   */
+  private applyLabels(): void {
+    const refs = this.refs;
+    if (!refs) return;
+    const label = this.settings.overlayCollapsed ? t('overlay.expand') : t('overlay.collapse');
+    refs.title.textContent = t('app.timerTitle');
+    refs.resetBtn.textContent = t('overlay.reset');
+    refs.collapseBtn.title = label;
+    refs.collapseBtn.setAttribute('aria-label', label);
   }
 
   private applyPosition(position: OverlayPosition): void {
@@ -388,7 +439,7 @@ export class OverlayView {
 
     refs.time.textContent = text;
     refs.pillTime.textContent = text;
-    refs.modeTag.textContent = isCountdown ? '倒计时' : '正计时';
+    refs.modeTag.textContent = isCountdown ? t('mode.countdown') : t('mode.countup');
 
     // A finished question keeps its frozen value and shows that timing stopped
     // because the learner was done with it (answered correctly, or skipped).
@@ -406,34 +457,47 @@ export class OverlayView {
     if (status === 'expired') refs.pill.classList.add('expired');
 
     refs.pauseBtn.textContent =
-      state.phase === 'finished' ? '已完成' : state.phase === 'paused' ? '继续' : '暂停';
+      state.phase === 'finished'
+        ? t('overlay.finished')
+        : state.phase === 'paused'
+          ? t('overlay.resume')
+          : t('overlay.pause');
     refs.pauseBtn.disabled = state.phase === 'finished';
     refs.pauseBtn.classList.toggle('primary', state.phase === 'running');
 
     // Meta line: limit, overrun, progress and question identity.
     const bits: string[] = [];
     if (isCountdown && state.limitMs !== null) {
-      bits.push(`<span class="k">限时</span> ${Math.round(state.limitMs / 1000)}s`);
+      bits.push(
+        `<span class="k">${t('overlay.metaLimit')}</span> ${Math.round(state.limitMs / 1000)}s`,
+      );
     }
     if (state.expired) {
-      bits.push(`<span class="k">超时</span> +${formatDuration(
+      bits.push(`<span class="k">${t('overlay.metaOverrun')}</span> +${formatDuration(
         Math.max(0, state.elapsedMs - (state.limitMs ?? 0)),
       )}`);
     }
-    if (state.progress) bits.push(`<span class="k">进度</span> ${escapeHtml(state.progress)}`);
+    if (state.progress) {
+      bits.push(`<span class="k">${t('overlay.metaProgress')}</span> ${escapeHtml(state.progress)}`);
+    }
     // Detection internals are opt-in (popup → 开发者模式). Without it the panel
     // keeps only what a learner needs: the time, the limit and the progress.
     if (this.settings.developerMode) {
       const confidenceClass = `confidence-${state.confidence}`;
-      const confidenceLabel =
+      const confidenceLabel = t(
         state.confidence === 'stable-id'
-          ? '题目ID'
+          ? 'overlay.confidenceStableId'
           : state.confidence === 'fingerprint'
-            ? '指纹'
+            ? 'overlay.confidenceFingerprint'
             : state.confidence === 'weak'
-              ? '弱信号'
-              : '未识别';
-      bits.push(`<span class="${confidenceClass}">识别：${confidenceLabel}</span>`);
+              ? 'overlay.confidenceWeak'
+              : 'overlay.confidenceNone',
+      );
+      bits.push(
+        `<span class="${confidenceClass}">${t('overlay.metaConfidence', {
+          level: confidenceLabel,
+        })}</span>`,
+      );
     }
     refs.meta.innerHTML = bits.join('');
 
@@ -455,7 +519,9 @@ export class OverlayView {
     const eventEl = refs.foot.querySelector<HTMLElement>('[data-role="event"]');
     if (eventEl) eventEl.textContent = state.lastEvent;
     const recordsEl = refs.foot.querySelector<HTMLElement>('[data-role="records"]');
-    if (recordsEl) recordsEl.textContent = `已记录 ${state.savedRecords}`;
+    if (recordsEl) {
+      recordsEl.textContent = t('overlay.savedRecords', { count: state.savedRecords });
+    }
     refs.foot.hidden = !this.settings.developerMode;
   }
 

@@ -26,6 +26,7 @@ import { OVERLAY_HOST_ID } from '../src/question-detector.js';
 import { sessionKey } from '../src/storage.js';
 import { SUMMARY_HOST_ID } from '../src/summary-view.js';
 import { formatDuration } from '../src/timer-engine.js';
+import { t } from '../src/i18n/index.js';
 
 const T0 = 1_700_000_000_000;
 const EXERCISE_A = '/math/cc-third-grade-math/imp-addition-and-subtraction/e/addition_4';
@@ -299,6 +300,44 @@ function summaryText(): string {
   return document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.textContent ?? '';
 }
 
+/**
+ * A row label with every tag word removed, so "which question is this row about"
+ * can be asserted without depending on how the tags happen to be worded.
+ */
+function stripRowTags(label: string): string {
+  const tags = [
+    t('summary.tagCorrect'),
+    t('summary.tagIncorrect'),
+    t('summary.tagTimedOut'),
+    t('summary.tagSkipped'),
+    t('summary.tagBonus'),
+    t('summary.tagMissing'),
+  ];
+  return tags.reduce((text, tag) => text.split(tag).join(''), label).trim();
+}
+
+/**
+ * Matcher for the card's header line — "3 questions · 2 with data · 0:42 total".
+ *
+ * The summed time is deliberately left open: these tests drive fake timers, and
+ * what is being asserted is the question COUNT. Everything else, wording and
+ * plural form included, comes from the catalog, which keeps the assertion
+ * language-agnostic.
+ */
+function totalLine(count: number, timed?: number): RegExp {
+  const marker = '\u0000';
+  const template =
+    timed === undefined
+      ? t('summary.totalAll', { count, total: marker })
+      : t('summary.totalPartial', { count, timed, total: marker });
+  const [head = '', tail = ''] = template.split(marker);
+  return new RegExp(`${escapeRegExp(head)}.+${escapeRegExp(tail)}`);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** The label and duration cell of each row of the summary card, in order. */
 function summaryRows(): Array<{ label: string; duration: string }> {
   const rows =
@@ -529,7 +568,7 @@ describe('a question that cannot be identified', () => {
     // The learner pauses from the panel.
     clickOverlay('pause');
     await advance(500);
-    expect(pauseLabel()).toBe('继续');
+    expect(pauseLabel()).toBe(t('overlay.resume'));
 
     // The page then loses its identity and comes back. Only an *automatic*
     // pause is resumed, so this one must stay paused.
@@ -541,7 +580,7 @@ describe('a question that cannot be identified', () => {
     await advance(1500);
 
     expect(panelVisible()).toBe(true);
-    expect(pauseLabel()).toBe('继续');
+    expect(pauseLabel()).toBe(t('overlay.resume'));
     expect(savedSession(data, EXERCISE_A)['phase']).toBe('paused');
   });
 
@@ -600,9 +639,9 @@ describe('a question that cannot be identified', () => {
 
     expect(summaryRowCount()).toBe(3);
     // Rows follow capture order, so row 2 is the question that was paused.
-    expect(summaryText()).toContain('第 2 题');
-    expect(summaryText()).toContain('暂停 0:2');
-    expect(summaryText()).not.toContain('加试');
+    expect(summaryText()).toContain(t('summary.questionNumber', { number: 2 }));
+    expect(summaryText()).toContain(t('summary.paused', { duration: '0:2' }));
+    expect(summaryText()).not.toContain(t('summary.tagBonus'));
   });
 
   it('matches the manual verification recipe in the README (remove then restore the region)', async () => {
@@ -808,13 +847,14 @@ describe('the card of a practice resumed after a switch', () => {
     // --- What the learner sees: practice A's card, and only practice A's ----
     expect(summaryRowCount()).toBe(3);
     const rows = summaryRows();
-    expect(rows.map((row) => row.label.replace(/答对|答错|超时|已跳过|加试|数据缺失/g, '').trim()))
-      .toEqual(['第 1 题', '第 2 题', '第 3 题']);
+    expect(rows.map((row) => stripRowTags(row.label))).toEqual(
+      [1, 2, 3].map((number) => t('summary.questionNumber', { number })),
+    );
     // Row 1 is the question from before the switch, showing its real duration.
-    expect(rows[0]?.label).toContain('答对');
+    expect(rows[0]?.label).toContain(t('summary.tagCorrect'));
     expect(rows[0]?.duration).toBe(formatDuration(Number(aRecords[0]?.['durationMs'])));
-    expect(summaryText()).not.toContain('第 4 题');
-    expect(summaryText()).toContain('共 3 题');
+    expect(summaryText()).not.toContain(t('summary.questionNumber', { number: 4 }));
+    expect(summaryText()).toMatch(totalLine(3));
   });
 
   it('stamps the number of the question it timed, not the one the page moved on to', async () => {
@@ -887,16 +927,15 @@ describe('the card of a practice resumed after a switch', () => {
     // says 数据缺失 rather than showing question 3's time under its number.
     expect(summaryRowCount()).toBe(3);
     const rows = summaryRows();
-    expect(rows[0]?.label).toContain('第 1 题');
+    expect(rows[0]?.label).toContain(t('summary.questionNumber', { number: 1 }));
     expect(rows[0]?.duration).toBe(formatDuration(Number(aRecords[0]?.['durationMs'])));
-    expect(rows[1]?.label).toContain('第 2 题');
-    expect(rows[1]?.label).toContain('数据缺失');
+    expect(rows[1]?.label).toContain(t('summary.questionNumber', { number: 2 }));
+    expect(rows[1]?.label).toContain(t('summary.tagMissing'));
     expect(rows[1]?.duration).toBe('—');
-    expect(rows[2]?.label).toContain('第 3 题');
+    expect(rows[2]?.label).toContain(t('summary.questionNumber', { number: 3 }));
     expect(rows[2]?.duration).toBe(formatDuration(Number(aRecords[1]?.['durationMs'])));
-    // The header says how much of the attempt actually has data.
-    expect(summaryText()).toContain('共 3 题');
-    expect(summaryText()).toContain('2 题有数据');
+    // The header says how many of the attempt's questions actually have data.
+    expect(summaryText()).toMatch(totalLine(3, 2));
   });
 });
 
@@ -1063,7 +1102,7 @@ describe('moving to another practice inside the app', () => {
     expect(aRecords).toHaveLength(3);
     expect(new Set(aRecords.map((record) => record['runId']))).toEqual(new Set([firstRunId]));
     expect(summaryRowCount()).toBe(3);
-    expect(summaryText()).not.toContain('数据缺失');
+    expect(summaryText()).not.toContain(t('summary.tagMissing'));
   });
 });
 
@@ -1113,7 +1152,7 @@ describe('a card built when the attempt id was lost mid-way', () => {
     // Four questions, all four with data - the two from before the interruption
     // are retrieved by practice + attempt window, not by the lost run id.
     expect(summaryRowCount()).toBe(4);
-    expect(summaryText()).not.toContain('数据缺失');
+    expect(summaryText()).not.toContain(t('summary.tagMissing'));
     const aRecords = savedRecords(data).filter((record) => record['exerciseKey'] === EXERCISE_A);
     expect(aRecords).toHaveLength(4);
     expect(new Set(aRecords.map((record) => record['runId'])).size).toBe(2);

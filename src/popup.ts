@@ -19,7 +19,9 @@ import {
   type StorageArea,
 } from './storage.js';
 import { formatDuration } from './timer-engine.js';
-import type { QuestionRecord, Settings, TimerSnapshot } from './types.js';
+import { getLocale, setLocale, t, type MessageKey } from './i18n/index.js';
+import { applyDocumentLanguage, localizeDom } from './i18n/dom.js';
+import type { LanguageSetting, QuestionRecord, Settings, TimerSnapshot } from './types.js';
 
 interface StatusResponse {
   ok: boolean;
@@ -58,11 +60,18 @@ const el = <T extends HTMLElement>(id: string): T => {
   return node as T;
 };
 
-const CONFIDENCE_LABEL: Record<string, string> = {
-  'stable-id': '题目 ID（强）',
-  fingerprint: '题目指纹（中）',
-  weak: '弱信号',
-  none: '未识别',
+/**
+ * How the detector's confidence is described in the popup's details list.
+ *
+ * This is the popup's own wording, deliberately more explicit than the two-word
+ * labels the floating panel has room for: the popup is where a learner comes to
+ * find out WHY something is not being recognised.
+ */
+const CONFIDENCE_LABEL: Record<string, MessageKey> = {
+  'stable-id': 'popup.confidenceStableId',
+  fingerprint: 'popup.confidenceFingerprint',
+  weak: 'popup.confidenceWeak',
+  none: 'popup.confidenceNone',
 };
 
 let area: StorageArea | null = null;
@@ -99,6 +108,13 @@ async function main(): Promise<void> {
   el('version').textContent = `v${chrome.runtime.getManifest().version}`;
 
   settings = await loadSettings(area);
+  // The stored language decides every label below, so it is applied before the
+  // first paint: the markup's English text is only the source language and the
+  // fallback, never what a Chinese user is meant to see.
+  setLocale(settings.language);
+  applyDocumentLanguage();
+  localizeDom();
+
   paintSettings(settings);
   await paintRecords();
 
@@ -115,6 +131,7 @@ async function main(): Promise<void> {
  * ------------------------------------------------------------------ */
 
 function paintSettings(current: Settings): void {
+  (el<HTMLSelectElement>('language')).value = current.language;
   (el<HTMLSelectElement>('defaultMode')).value = current.defaultMode;
   (el<HTMLInputElement>('countdownLimitSeconds')).value = String(current.countdownLimitSeconds);
   (el<HTMLInputElement>('soundEnabled')).checked = current.soundEnabled;
@@ -139,8 +156,23 @@ function wireSettingsInputs(): void {
     settings = sanitizeSettings({ ...settings, ...patch });
     paintSettings(settings);
     const ok = await saveSettings(area, settings);
-    if (!ok) saveHint.show('保存失败：浏览器存储不可用', 'error');
+    if (!ok) saveHint.show(t('popup.saveFailed'), 'error');
   };
+
+  el<HTMLSelectElement>('language').addEventListener('change', (event) => {
+    const raw = (event.target as HTMLSelectElement).value;
+    const language: LanguageSetting = raw === 'en' || raw === 'zh-CN' ? raw : 'auto';
+    // Re-letter the popup from the new catalog before saving it. Everything the
+    // popup builds from data rather than from markup — the status line, the mode
+    // tag, the last event, the record list — is repainted explicitly, because
+    // `localizeDom` only walks `data-i18n` nodes.
+    setLocale(language);
+    applyDocumentLanguage();
+    localizeDom();
+    void commit({ language });
+    void paintRecords();
+    void refreshStatus();
+  });
 
   el<HTMLSelectElement>('defaultMode').addEventListener('change', (event) => {
     const value = (event.target as HTMLSelectElement).value;
@@ -170,7 +202,7 @@ function wireSettingsInputs(): void {
 
 async function paintRecords(): Promise<void> {
   const records = await loadRecords(area);
-  el('record-count').textContent = `已保存 ${records.length} 条`;
+  el('record-count').textContent = t('popup.savedCount', { count: records.length });
   // With nothing saved there is nothing to clear: an always-visible danger
   // button that does nothing is noise, so only offer it when it has an effect.
   el<HTMLButtonElement>('clear-records').hidden = records.length === 0;
@@ -180,7 +212,7 @@ async function paintRecords(): Promise<void> {
   if (records.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'empty';
-    empty.textContent = '暂无记录。在可汗学院练习页完成一道题后会出现在这里。';
+    empty.textContent = t('popup.recordsEmpty');
     list.append(empty);
     return;
   }
@@ -195,20 +227,25 @@ async function paintRecords(): Promise<void> {
     const right = document.createElement('span');
     right.className = 'r-meta';
     const bits = [
-      new Date(record.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      record.mode === 'countdown' ? '倒计时' : '正计时',
+      // Formatted in the language the learner reads, not in the browser's, so
+      // the clock time agrees with the labels around it.
+      new Date(record.startedAt).toLocaleTimeString(getLocale(), {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      record.mode === 'countdown' ? t('mode.countdown') : t('mode.countup'),
     ];
-    if (record.timedOut) bits.push('超时');
+    if (record.timedOut) bits.push(t('popup.recordTimedOut'));
     if (record.firstSubmissionAt !== null) {
       bits.push(
         record.firstSubmissionOutcome === 'incorrect'
-          ? '首次答错'
+          ? t('popup.recordFirstIncorrect')
           : record.firstSubmissionOutcome === 'correct'
-            ? '首次答对'
-            : '已提交',
+            ? t('popup.recordFirstCorrect')
+            : t('popup.recordSubmitted'),
       );
     }
-    if (record.status === 'partial') bits.push('未完成');
+    if (record.status === 'partial') bits.push(t('popup.recordPartial'));
     bits.push(shortKey(record.questionKey));
     right.textContent = bits.join(' · ');
 
@@ -218,8 +255,8 @@ async function paintRecords(): Promise<void> {
 }
 
 function shortKey(key: string): string {
-  if (key.startsWith('id:')) return `ID ${key.slice(3, 15)}`;
-  if (key.startsWith('fp:')) return `指纹 ${key.slice(3)}`;
+  if (key.startsWith('id:')) return t('popup.shortKeyId', { key: key.slice(3, 15) });
+  if (key.startsWith('fp:')) return t('popup.shortKeyFingerprint', { key: key.slice(3) });
   if (key.startsWith('prog:')) return key.slice(5);
   return key.slice(0, 16);
 }
@@ -230,8 +267,8 @@ function wireClearButton(): void {
       const ok = await clearRecords(area);
       // The result belongs next to the button that was pressed, not in the
       // settings card, which knows nothing about records.
-      if (ok) recordsHint.show('记录已清除');
-      else recordsHint.show('清除失败：浏览器存储不可用', 'error');
+      if (ok) recordsHint.show(t('popup.cleared'));
+      else recordsHint.show(t('popup.clearFailed'), 'error');
       await paintRecords();
     })();
   });
@@ -246,7 +283,7 @@ async function refreshStatus(): Promise<void> {
   try {
     const response = await requestStatus();
     if (!response) {
-      statusText.textContent = '此标签页未运行计时器';
+      statusText.textContent = t('popup.noTimerHere');
       statusText.className = 'status-value warn';
       el('details').hidden = true;
       el('readout').hidden = true;
@@ -256,10 +293,10 @@ async function refreshStatus(): Promise<void> {
     }
     paintStatus(response);
   } catch (error) {
-    statusText.textContent = '无法读取页面状态';
+    statusText.textContent = t('popup.statusUnreadable');
     statusText.className = 'status-value bad';
     el('warning').hidden = false;
-    el('warning').textContent = `读取失败：${(error as Error).message}`;
+    el('warning').textContent = t('popup.statusReadFailed', { message: (error as Error).message });
   }
 }
 
@@ -283,24 +320,24 @@ function paintStatus(response: StatusResponse): void {
   const diag = response.diagnostics;
 
   if (response.startCard) {
-    statusText.textContent = '尚未开始：请点击页面上的「Let\u2019s go」';
+    statusText.textContent = t('popup.notStarted');
     statusText.className = 'status-value warn';
   } else if (response.pausedForUnidentified) {
     // The panel is hidden while 未识别, so say plainly that time is not being
     // counted and that the question keeps its earlier time.
-    statusText.textContent = '未识别到题目：本题计时已暂停，重新识别到本题后自动继续';
+    statusText.textContent = t('popup.pausedForUnidentified');
     statusText.className = 'status-value warn';
   } else if (!diag.regionFound) {
-    statusText.textContent = '未找到题目区域';
+    statusText.textContent = t('popup.regionMissing');
     statusText.className = 'status-value bad';
   } else if (diag.confidence === 'none') {
-    statusText.textContent = '已找到题目区域，但无法识别题目';
+    statusText.textContent = t('popup.regionOnly');
     statusText.className = 'status-value warn';
   } else if (diag.confidence === 'weak') {
-    statusText.textContent = '识别置信度较低';
+    statusText.textContent = t('popup.lowConfidence');
     statusText.className = 'status-value warn';
   } else {
-    statusText.textContent = '正在计时';
+    statusText.textContent = t('popup.timing');
     statusText.className = 'status-value ok';
   }
 
@@ -308,17 +345,21 @@ function paintStatus(response: StatusResponse): void {
   el('readout').hidden = snapshot === null;
   if (snapshot) {
     el('display').textContent = response.display;
-    el('mode-tag').textContent = snapshot.mode === 'countdown' ? '倒计时' : '正计时';
+    el('mode-tag').textContent =
+      snapshot.mode === 'countdown' ? t('mode.countdown') : t('mode.countup');
     const expiredTag = el('expired-tag');
     expiredTag.hidden = !snapshot.expired;
     if (snapshot.expired) {
-      expiredTag.textContent = `已超时 +${formatDuration(snapshot.overrunMs)}`;
+      expiredTag.textContent = t('popup.expiredTag', {
+        duration: formatDuration(snapshot.overrunMs),
+      });
     }
   }
 
+  const confidenceKey = CONFIDENCE_LABEL[diag.confidence];
   el('details').hidden = false;
   el('d-strategy').textContent = diag.strategy ?? '—';
-  el('d-confidence').textContent = CONFIDENCE_LABEL[diag.confidence] ?? diag.confidence;
+  el('d-confidence').textContent = confidenceKey ? t(confidenceKey) : diag.confidence;
   el('d-question').textContent = shortKey(response.questionKey ?? '—');
   el('d-progress').textContent = diag.progress ?? '—';
   el('d-event').textContent = response.lastEvent || '—';
@@ -334,16 +375,16 @@ function paintStatus(response: StatusResponse): void {
   el('diag-box').hidden = false;
   el('diag-text').textContent = [
     `URL: ${response.url}`,
-    `练习标识: ${response.exerciseKey || '—'}`,
-    `题目键: ${response.questionKey ?? '—'}`,
-    `区域已找到: ${diag.regionFound}`,
-    `选择器策略: ${diag.strategy ?? '—'}`,
+    `${t('popup.diagPractice')} ${response.exerciseKey || '—'}`,
+    `${t('popup.diagQuestionKey')} ${response.questionKey ?? '—'}`,
+    `${t('popup.diagRegionFound')} ${diag.regionFound}`,
+    `${t('popup.diagStrategy')} ${diag.strategy ?? '—'}`,
     '',
-    '匹配记录:',
-    ...(diag.notes.length > 0 ? diag.notes.map((n) => `  · ${n}`) : ['  （无）']),
+    t('popup.diagMatchedRecords'),
+    ...(diag.notes.length > 0 ? diag.notes.map((n) => `  · ${n}`) : [`  ${t('popup.diagNone')}`]),
     '',
-    '问题记录:',
-    ...(diag.errors.length > 0 ? diag.errors.map((n) => `  ! ${n}`) : ['  （无）']),
+    t('popup.diagProblems'),
+    ...(diag.errors.length > 0 ? diag.errors.map((n) => `  ! ${n}`) : [`  ${t('popup.diagNone')}`]),
   ].join('\n');
 
   if (response.savedRecords !== undefined) {
@@ -354,7 +395,7 @@ function paintStatus(response: StatusResponse): void {
 main().catch((error: unknown) => {
   const statusText = document.getElementById('status-text');
   if (statusText) {
-    statusText.textContent = `面板初始化失败：${(error as Error).message}`;
+    statusText.textContent = t('popup.initFailed', { message: (error as Error).message });
     statusText.className = 'status-value bad';
   }
 });
