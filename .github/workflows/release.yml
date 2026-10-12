@@ -1,0 +1,179 @@
+# Publish a GitHub Release from a version tag.
+#
+# Releasing, in full:
+#
+#   # 1. bump the version and commit it on main
+#   pnpm version patch --no-git-tag-version   # or edit package.json by hand
+#   git commit -am "chore(release): 0.2.1"
+#   git push origin main
+#
+#   # 2. tag that commit and push the tag — this is what starts the workflow
+#   git tag v0.2.1
+#   git push origin v0.2.1
+#
+# What the workflow does:
+#   1. runs the same offline gate as `verify.yml` (`pnpm verify`), so a release
+#      can never ship a build that has not passed the type check, the test suite
+#      and `verify-dist.mjs` — which machine-checks the manifest, the permission
+#      allowlist, the icons and the localisation catalogs, i.e. the same files the
+#      Edge Add-ons / Chrome Web Store upload will be judged on;
+#   2. packs `dist/` into a ZIP whose ROOT is the extension: `manifest.json` at
+#      the top level, not inside a `dist/` folder. That is what a store upload
+#      expects, and what "Load unpacked" needs after unzipping;
+#   3. publishes that ZIP plus a SHA-256 checksum as Release assets, with the
+#      release notes generated from the commits since the previous release.
+#
+# Tag rules, enforced by the guard step below (the run fails, nothing is
+# published, if any of them is broken):
+#   * `v<major>.<minor>.<patch>`, optionally with a suffix: `v0.2.0`, `v0.2.0-rc.1`;
+#   * the numeric core must equal `version` in package.json — `scripts/build.mjs`
+#     copies that value into `manifest.version`, and browsers reject anything that
+#     is not plain dotted numeric, so package.json must never carry a suffix
+#     (`verify-dist.mjs` asserts the same thing on the built manifest);
+#   * a suffixed tag is published as a pre-release, so it never becomes "latest";
+#   * the tagged commit must be on `main`, the branch `verify.yml` gates.
+#
+# The real-browser checks are deliberately NOT run here: `e2e.yml` drives the live
+# khanacademy.org, so it cannot gate a release.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+# One release per tag. A re-run for a tag that already has a release fails in the
+# publish step instead of quietly replacing assets users may already have
+# downloaded: the published checksum is only worth anything if the asset under it
+# cannot change. To redo a release, delete it first:
+#   gh release delete v0.2.1 --yes && git push --delete origin v0.2.1
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: verify, pack dist/, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The only write this job needs: creating the release and uploading its two
+      # assets. Everything else it does is read-only.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The guard below walks history ("is the tagged commit on main?"), so
+          # the full history and the tag itself have to be fetched.
+          fetch-depth: 0
+
+      # The pnpm version comes from `packageManager` in package.json, exactly as
+      # in verify.yml and as the README tells contributors to work.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The tag is the release's identity: refuse to publish one that disagrees
+      # with the version it would ship. Everything reaches the script through
+      # `env`, never through `${{ }}` inside it, so a tag name cannot inject shell
+      # commands.
+      - name: Check the tag against package.json
+        id: release
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not v<major>.<minor>.<patch>[-suffix]"
+            exit 1
+          fi
+          core="${BASH_REMATCH[1]}"
+          suffix="${BASH_REMATCH[2]}"
+
+          declared="$(node -p "require('./package.json').version")"
+          if [[ "$core" != "$declared" ]]; then
+            echo "::error::tag '$TAG' says $core, but package.json says $declared"
+            echo "::error::bump and commit package.json before tagging (see this file's header)"
+            exit 1
+          fi
+
+          # verify.yml only gates main; releasing anything else would skip it.
+          git fetch --no-tags --quiet origin main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$SHA is not on main; releases are cut from main"
+            exit 1
+          fi
+
+          echo "version=$core" >> "$GITHUB_OUTPUT"
+          if [[ -n "$suffix" ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "releasing $core from tag $TAG (prerelease=${suffix:-no})"
+
+      # Same gate as verify.yml, run again here on purpose: the tagged commit is
+      # what ships, and this run's log is the release's own evidence that it was
+      # verified. `verify` ends with the esbuild bundle, so `dist/` is ready.
+      - name: Verify the build
+        run: pnpm run verify
+
+      # Packaging rules that matter:
+      #   * names come from INSIDE dist/, so the archive root is the extension
+      #     itself — a store upload containing a top-level `dist/` folder is
+      #     rejected as "manifest.json not found";
+      #   * entries are sorted, carry no extra OS attributes (`-X`) and their
+      #     timestamps are pinned to the tagged commit, so rebuilding that commit
+      #     yields a byte-identical archive (verified: two local runs of these
+      #     commands produce the same SHA-256) and the published checksum can be
+      #     reproduced by anyone, not just trusted.
+      - name: Pack dist/ and checksum it
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          archive="artifacts/khan-academy-timer-${VERSION}.zip"
+
+          stamp="$(TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M.%S "$SHA")"
+          TZ=UTC find dist -exec touch -t "$stamp" {} +
+          ( cd dist && find . -type f | sed 's|^\./||' | LC_ALL=C sort | zip -X -q "../$archive" -@ )
+
+          # The one structural rule a store upload and an unpacked load share.
+          if ! unzip -Z1 "$archive" | grep -qx 'manifest.json'; then
+            echo "::error::manifest.json is not at the ZIP root; the archive would be rejected"
+            exit 1
+          fi
+          unzip -l "$archive"
+
+          ( cd artifacts && sha256sum "$(basename "$archive")" > SHA256SUMS.txt && cat SHA256SUMS.txt )
+
+      # `gh` is preinstalled on the runner, so no third-party release action is
+      # needed — nothing here runs code the repository does not review.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.release.outputs.version }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$TAG" --generate-notes)
+          if [[ "$PRERELEASE" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" "${flags[@]}" \
+            "artifacts/khan-academy-timer-${VERSION}.zip" \
+            artifacts/SHA256SUMS.txt

@@ -1,0 +1,75 @@
+# Real-browser end-to-end verification — MANUAL ONLY.
+#
+# These checks load `dist/` into a real Microsoft Edge, open the live
+# khanacademy.org and drive the whole feature set over the DevTools Protocol.
+# They are deliberately not part of `verify.yml`:
+#
+#   * they need the public network and the live site, so they are not
+#     deterministic and would fail for reasons unrelated to a commit;
+#   * they are slow (minutes) compared with the offline gate;
+#   * `verify:practice-switch` additionally needs a signed-in Khan Academy
+#     account, so it is not runnable here at all (run it locally).
+#
+# `EDGE_PATH` is what makes running them off one developer machine possible:
+# the scripts resolve their browser from it before falling back to the platform
+# defaults. On this runner the `microsoft-edge` wrapper lands on `PATH`, so the
+# fallback would find it too — it is set explicitly to document the contract.
+name: e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: real Edge against the live site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Microsoft's apt repository. `microsoft-edge-stable` is not in the
+      # default Ubuntu archive.
+      - name: Install Microsoft Edge
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg ca-certificates
+          wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/microsoft.gpg > /dev/null
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/edge stable main" \
+            | sudo tee /etc/apt/sources.list.d/microsoft-edge.list
+          sudo apt-get update
+          sudo apt-get install -y microsoft-edge-stable
+          microsoft-edge --version
+
+      - name: Verify the browser is discoverable
+        env:
+          EDGE_PATH: /usr/bin/microsoft-edge-stable
+        run: node -e "import('./scripts/lib/browser.mjs').then(m => console.log('edge:', m.resolveEdge()))"
+
+      - name: End-to-end verification
+        env:
+          EDGE_PATH: /usr/bin/microsoft-edge-stable
+        run: pnpm run verify:edge | tee e2e.log
+
+      # A failed run is exactly when the log matters; `if: always()` keeps it.
+      - name: Upload the verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-log
+          path: e2e.log
+          if-no-files-found: ignore

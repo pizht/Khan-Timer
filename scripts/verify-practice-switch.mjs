@@ -38,10 +38,20 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
-const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+/**
+ * The browser is resolved from `EDGE_PATH`, the platform default locations, or
+ * `PATH` — see `scripts/lib/browser.mjs`.
+ *
+ * Resolution is lazy on purpose: importing this file must not fail, so that
+ * `assertBrowserRunnable()` in `main()` is what reports a missing browser (with
+ * the list of paths it tried) instead of a bare module-load stack trace.
+ */
+let edgePath;
+const edgeBinary = () => (edgePath ??= resolveEdge());
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const options = Object.fromEntries(
@@ -283,7 +293,7 @@ const DEBUG_STATE = `(() => {
 async function readCookiesFromProfile(sourceProfile) {
   const port = PORT + 1;
   const edge = spawn(
-    EDGE,
+    edgeBinary(),
     [
       '--headless=new',
       '--no-sandbox',
@@ -772,6 +782,8 @@ async function waitForLogin(cdp) {
 }
 
 async function main() {
+  assertBrowserRunnable();
+
   console.log(`\npractice A: ${URL_A}`);
   console.log(`practice B: ${URL_B}`);
   console.log(`switch mode: ${SWITCH}${LOGIN ? '  (login window)' : ''}\n`);
@@ -785,7 +797,7 @@ async function main() {
     : await mkdtemp(path.join(tmpdir(), 'kat-switch-'));
   console.log(`  browser profile: ${profile}${cookies ? ' (fresh, with the signed-in cookies)' : ''}`);
   const edge = spawn(
-    EDGE,
+    edgeBinary(),
     [
       ...(HEADED ? [] : ['--headless=new']),
       '--no-sandbox',
@@ -1022,4 +1034,7 @@ function parseDisplay(text) {
   return (Number(match[1]) * 60 + Number(match[2])) * 1000;
 }
 
-await main();
+await main().catch((error) => {
+  console.error(`\nverification failed to run: ${error.message}\n`);
+  process.exit(1);
+});

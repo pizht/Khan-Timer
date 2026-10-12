@@ -36,10 +36,20 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertBrowserRunnable, resolveEdge } from './lib/browser.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
-const EDGE = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+/**
+ * The browser is resolved from `EDGE_PATH`, the platform default locations, or
+ * `PATH` — see `scripts/lib/browser.mjs`.
+ *
+ * Resolution is lazy on purpose: importing this file must not fail, so that
+ * `assertBrowserRunnable()` in `main()` is what reports a missing browser (with
+ * the list of paths it tried) instead of a bare module-load stack trace.
+ */
+let edgePath;
+const edgeBinary = () => (edgePath ??= resolveEdge());
 const URL_ARG =
   process.argv[2] ??
   'https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtraction/imp-adding-with-regrouping-within-1000/e/addition_4';
@@ -470,10 +480,12 @@ async function waitForSummary(cdp, timeoutMs = 25000) {
 }
 
 async function main() {
+  assertBrowserRunnable();
+
   const profile = await mkdtemp(path.join(tmpdir(), 'kat-verify-'));
 
   const edge = spawn(
-    EDGE,
+    edgeBinary(),
     [
       '--headless=new',
       '--no-sandbox',

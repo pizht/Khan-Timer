@@ -409,21 +409,44 @@ pnpm run build
 ```bash
 pnpm install
 
-pnpm run build          # 一次性构建到 dist/
-pnpm run build:watch     # 监听源码变化自动重建
-pnpm run typecheck       # tsc --noEmit，严格模式
-pnpm run test            # vitest run
-pnpm run test:watch      # vitest 监听
-pnpm run icons           # 从 assets/logo.png 重新生成图标 PNG
-pnpm run verify          # typecheck + test + build + dist 检查
-pnpm run verify:edge     # 真实 Edge 端到端验证（67 项 + 语言相关 6 项）
-pnpm run verify:all      # 上面两个一起跑
+pnpm run build                  # 一次性构建到 dist/
+pnpm run build:watch            # 监听源码变化自动重建
+pnpm run typecheck              # tsc --noEmit，严格模式
+pnpm run test                   # vitest run
+pnpm run test:watch             # vitest 监听
+pnpm run icons                  # 从 assets/logo.png 重新生成图标 PNG
+pnpm run verify                 # typecheck + test + build + dist 检查（不需要浏览器）
+pnpm run verify:edge            # 真实 Edge 端到端验证（67 项 + 语言相关 6 项）
+pnpm run verify:startcard       # 真实 Edge：起始页不闪面板（10 项）
+pnpm run verify:practice-switch # 真实 Edge：切练习 / 回到原练习做完整轮
+pnpm run verify:all             # verify + verify:edge
+```
+
+### 指定浏览器（`EDGE_PATH`）
+
+三个真实浏览器脚本（`verify:edge` / `verify:startcard` / `verify:practice-switch`）
+按这个顺序找 Edge：
+
+1. 环境变量 **`EDGE_PATH`** —— 显式指定，优先级最高；
+2. 当前平台的默认安装位置（macOS 的 `/Applications/Microsoft Edge.app/...`、
+   Linux 的 `/usr/bin/microsoft-edge`、Windows 的 `Program Files` 路径）；
+3. `PATH` 上的 `microsoft-edge` / `microsoft-edge-stable` / `msedge`。
+
+解析逻辑集中在 [`scripts/lib/browser.mjs`](scripts/lib/browser.mjs)——**不再硬编码
+某一个平台**。找不到浏览器时脚本会在**启动任何进程之前**报错，并列出试过的每条路径，
+而不是几秒后抛一个看起来无关的 DevTools 连接超时。非默认安装位置或另一台机器上：
+
+```bash
+EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 ```
 
 `src/` 与 `dist/` 严格分离：**Edge 只加载 `dist/` 里编译后的 JavaScript**。
 
 构建**刻意不做压缩**，并同时输出 source map。这样需求 8.4「代码审查确认没有计时数据
 上传」可以直接对着 `dist/*.js` 人工审查。
+
+`pnpm run verify` 是**离线**的（不起浏览器、不联网），CI 每次推送都会跑它；
+真实浏览器验证需要网络、会驱动线上可汗学院，所以要显式手动执行。
 
 ### Logo 与图标
 
@@ -440,7 +463,8 @@ pnpm run verify:all      # 上面两个一起跑
 
 ## 测试与验证
 
-本项目提供三层可执行的验证，全部可以一条条重跑。
+本项目提供三层可执行的验证（单元测试、产物机器检查、真实浏览器端到端），
+外加持续集成与两条只能手动走的检查，全部可以一条条重跑。
 
 ### 1. 单元测试
 
@@ -448,7 +472,7 @@ pnpm run verify:all      # 上面两个一起跑
 pnpm run test
 ```
 
-238 个用例，覆盖：
+271 个用例，8 个测试文件，覆盖：
 
 - **计时引擎**（`tests/timer-engine.test.ts`）：从时间戳计算用时、暂停/继续、
   大跨度时钟跳跃（模拟休眠一小时）、倒计时精确归零时刻、超时只提示一次、
@@ -546,7 +570,7 @@ node scripts/verify-dist.mjs
 然后读结束页卡片（Shadow DOM）与 `chrome.storage.local`（通过扩展自身的 popup 页面）。
 
 ```bash
-node scripts/verify-practice-switch.mjs                     # A/B 用内置的两个练习
+pnpm run verify:practice-switch                                               # A/B 用内置的两个练习
 node scripts/verify-practice-switch.mjs <urlA> <urlB> --switch=spa
 node scripts/verify-practice-switch.mjs --profile=/tmp/kat-profile --headed   # 手动登录一次
 node scripts/verify-practice-switch.mjs --profile=/tmp/kat-profile            # 之后无头重跑
@@ -657,7 +681,25 @@ pnpm run verify:startcard
 
 > 这条命令不需要登录（起始页与前几道题对未登录用户可见），也不改任何本地数据。
 
-### 4. 手动验证「识别：未识别 → 暂停 → 恢复」
+### 4. 持续集成（GitHub Actions）
+
+两层工作流，按「能不能离线跑」切分：
+
+| 工作流 | 触发 | 跑什么 | 为什么这样切 |
+|---|---|---|---|
+| [`.github/workflows/verify.yml`](.github/workflows/verify.yml) | 每次 push / PR（+ 手动） | `pnpm run verify`（typecheck + 271 个用例 + build + 61 项产物检查） | 全离线、几秒级，可以当**提交门禁** |
+| [`.github/workflows/e2e.yml`](.github/workflows/e2e.yml) | **只手动** `workflow_dispatch` | 在 runner 上装 Edge，跑 `pnpm run verify:edge` | 要联网、要驱动线上可汗学院、耗时数分钟，**不该拦住普通提交** |
+
+真实浏览器工作流靠 `EDGE_PATH` 指向 runner 上的 `/usr/bin/microsoft-edge-stable`
+（见上一节），所以同一套脚本在本机和 CI 上是同一份代码。两点如实说明：
+
+- **`e2e.yml` 未在 CI 上实测过**：本机没有 Linux runner，我只能保证脚本本身
+  （`EDGE_PATH` 解析 + 真实 Edge 10/10 —— 见 3.5 节）是好的。第一次在 Actions 上手动
+  触发时请当作试用，留意可汗学院是否拒绝来自云 IP 的流量。
+- `verify:practice-switch` **没有进任何工作流**：它的结束页卡片验证需要真实登录账号，
+  无法在无人值守的 runner 上跑，只能本地手动执行。
+
+### 5. 手动验证「识别：未识别 → 暂停 → 恢复」
 
 真实 Edge 上无法稳定制造这一幕，所以这一条请手动走一遍。
 在任意练习页（先让面板出现并计时几秒）打开 DevTools Console：
@@ -692,7 +734,7 @@ removed.reverse().forEach(([parent, el, next]) => parent.insertBefore(el, next))
 > 同样的字段（`unidentified` / `autoPausedForIdentity` / `enginePhase`）由
 > `tests/controller.test.ts` 自动断言，所以上面的手动步骤与单元测试检查的是同一件事。
 
-### 5. 手动验证「练习起始页不会闪面板」
+### 6. 手动验证「练习起始页不会闪面板」
 
 在练习之间来回切几次，或直接打开一个练习链接（`…/e/<slug>`），确认：
 
@@ -748,8 +790,10 @@ khan-academy-timer/
 │   ├── _locales/              # ★ 扩展名与描述的本地化（en 为默认语言，zh_CN 为译文）
 │   ├── popup.html / popup.css
 │   └── icons/                 # 由 scripts/make-icons.mjs 从 assets/logo.png 生成
-├── tests/                     # vitest 单元测试（8 个文件，270 个用例）
+├── tests/                     # vitest 单元测试（8 个文件，271 个用例）
 ├── scripts/
+│   ├── lib/
+│   │   └── browser.mjs        # 定位 Edge（EDGE_PATH → 平台默认 → PATH）
 │   ├── build.mjs              # esbuild 打包到 dist/
 │   ├── verify-dist.mjs        # 构建产物机器校验（61 项，含多语言清单检查）
 │   ├── verify-extension.mjs   # 真实 Edge 端到端验证（67 项 + 语言相关 6 项）
@@ -769,6 +813,9 @@ khan-academy-timer/
 │   ├── i18n.md                # ★ 多语言方案：目录结构、语言解析、新增语言步骤
 │   └── known-limitations.md   # 已知限制清单
 ├── dist/                      # 构建输出，Edge 加载这个目录
+├── .github/workflows/
+│   ├── verify.yml             # 离线门禁：每次 push / PR 跑 pnpm run verify
+│   └── e2e.yml                # 真实 Edge 端到端，只手动触发
 ├── package.json
 ├── tsconfig.json
 └── vitest.config.ts

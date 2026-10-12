@@ -1,0 +1,49 @@
+# Offline verification on every change.
+#
+# This is the required gate: `pnpm verify` runs the TypeScript type check, the
+# vitest suite, the esbuild bundle, and `verify-dist.mjs` (which machine-checks
+# the manifest, permissions, icons, localisation and the "no network code"
+# requirement). None of it needs a browser or the network, so it is safe and
+# fast to run on every push.
+#
+# The real-browser end-to-end checks live in `e2e.yml`, which is manual only:
+# they drive the live khanacademy.org and must not gate ordinary commits.
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes an in-flight run for the same ref.
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: typecheck, test, build, dist checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pnpm version comes from `packageManager` in package.json, which is
+      # also what the README tells contributors to use (corepack).
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: pnpm run verify

@@ -5,6 +5,9 @@
   "description": "Question timer overlay for Khan Academy exercises and quizzes. Microsoft Edge (Chromium), Manifest V3.",
   "type": "module",
   "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "build:watch": "node scripts/build.mjs --watch",
@@ -14,6 +17,7 @@
     "verify": "npm run typecheck && npm run test && npm run build && node scripts/verify-dist.mjs",
     "verify:edge": "npm run build && node scripts/verify-extension.mjs",
     "verify:startcard": "npm run build && node scripts/verify-startcard-flash.mjs",
+    "verify:practice-switch": "npm run build && node scripts/verify-practice-switch.mjs",
     "verify:all": "npm run verify && npm run verify:edge",
     "icons": "node scripts/make-icons.mjs"
   },
