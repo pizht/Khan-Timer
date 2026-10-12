@@ -17,6 +17,7 @@
 import {
   OVERLAY_HOST_ID,
   QuestionDetector,
+  identityKeyOf,
   isPositionedQuestionKey,
   type DetectorDiagnostics,
   type ProgressStateChange,
@@ -248,11 +249,24 @@ export class ContentController {
     // numbers are never shown there.
     if (leavingExercise) this.parkCurrentQuestion(event.at);
 
-    // 识别：未识别. The page is not describing a question we can trust, so the
-    // clock of the question on screen is frozen (the engine is KEPT, just
-    // paused) and the panel is hidden. Freezing rather than discarding is what
-    // keeps the question's time, its record and its summary row alive.
-    this.unidentified = !isIdentified(snapshot);
+    // The page is not describing a question that is being SOLVED yet. That
+    // covers both "no question region" and "a region with nothing but a
+    // fingerprint" - an exercise's start card holds the previous question's
+    // Perseus framework before the footer's progress marker arrives, and timing
+    // that stretch is what used to bill the intro card (and the page load) to
+    // the first question, leave it looking paused, and flash the panel.
+    //
+    // A question is only timed once the page says WHICH question it is - see
+    // `isPositionedQuestionKey`. The identity upgrade from fingerprint to
+    // position is reported by the detector on the very next observation, and on
+    // the real site that is 20-200 ms after the region appears (measured), so
+    // nothing meaningful is lost.
+    //
+    // The clock of a question already being timed is frozen (the engine is KEPT,
+    // just paused) while it lasts, and the panel is hidden. Freezing rather than
+    // discarding is what keeps the question's time, its record and its summary
+    // row alive.
+    this.unidentified = !isIdentified(snapshot) || !isPositionedQuestionKey(identityKeyOfSnapshot(snapshot));
     if (this.unidentified) this.pauseForMissingIdentity(event.at);
 
     // A question whose number was not readable when it started (the progress
@@ -266,7 +280,12 @@ export class ContentController {
         if (!current) {
           // The first question of this exercise (initial detection, or the
           // exercise the learner just arrived at): pick up any session saved
-          // for this question earlier.
+          // for this question earlier. Only a POSITIONED question gets here, so
+          // this is also the moment the clock starts for it.
+          if (this.unidentified) {
+            this.lastEventText = '尚未开始计时：页面还没有报出这是第几题';
+            break;
+          }
           void this.beginQuestion(event.to, snapshot, event.at, true);
           break;
         }
@@ -277,6 +296,13 @@ export class ContentController {
           this.currentExerciseKey = exerciseKey;
           this.currentConfidence = snapshot.confidence;
           this.lastEventText = '题目未变化，计时继续';
+          break;
+        }
+        if (this.unidentified) {
+          // The identity moved but is not usable yet (e.g. straight to another
+          // fingerprint): finalise what was being timed, but do not start the
+          // next question's clock on a signal that is not a question.
+          void this.finalizeCurrentQuestion(event.at, 'question-change');
           break;
         }
         const now = event.at;
@@ -296,6 +322,15 @@ export class ContentController {
           this.currentConfidence = snapshot.confidence;
           this.lastEventText = '题目已按进度重新识别，计时继续';
           void this.checkpoint(event.at, true);
+          break;
+        }
+        // Nothing was being timed for the fingerprint the page showed a moment
+        // ago (a question region with no position yet: a page load in progress,
+        // or a practice start card holding the previous question's framework).
+        // Now that the page says which question it is, the clock starts - from
+        // zero, and counting only from here.
+        if (!current && !this.unidentified) {
+          void this.beginQuestion(event.to, snapshot, event.at, true);
         }
         break;
       }
@@ -1043,12 +1078,11 @@ export class ContentController {
    * "no" hides it:
    *
    *  - the learner turned the overlay off (the master switch);
-   *  - there is no question being timed at all;
-   *  - there is one, but the page has not confirmed its position yet — an
-   *    exercise's start card holds the previous question's Perseus region before
-   *    the footer's progress marker arrives, and showing a clock over content
-   *    that is not a question is what made the panel flash on a practice start
-   *    page;
+   *  - no question is being timed at all — which includes "the page has content
+   *    that looks like a question but has not said WHICH question it is": an
+   *    engine is only ever created for a positioned question (see
+   *    `onDetectionEvent`), so a start card's leftover Perseus region, a page
+   *    load in progress and a torn-down frame all land here;
    *  - 识别：未识别 (the page stopped offering an identity): a panel there would
    *    advertise a clock for a question the extension cannot even name;
    *  - the engine still belongs to the practice the learner just LEFT, whose
@@ -1062,7 +1096,6 @@ export class ContentController {
     if (!this.settings.overlayVisible) return false;
     const engine = this.engine;
     if (!engine) return false;
-    if (!isPositionedQuestionKey(engine.questionKey)) return false;
     if (this.unidentified) return false;
     return engine.exerciseKey === exerciseKeyFromUrl(location.href);
   }
@@ -1209,6 +1242,17 @@ export class ContentController {
         const saved = this.engine.serialize(now);
         void saveSession(this.area, saved);
       }
+      // A question that was already finished (answered correctly or skipped)
+      // whose record is still being held must be written NOW: the learner is
+      // leaving, and nothing else will ever come along to finalise it. Without
+      // this the last answer of a session disappears from the history whenever
+      // the page is closed, reloaded or navigated away from before the next
+      // question renders.
+      const held = this.pendingRecord;
+      if (held) {
+        this.pendingRecord = null;
+        void this.queueRecord(held);
+      }
     };
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
@@ -1352,6 +1396,15 @@ function isStatusRequest(message: unknown): boolean {
  */
 function isIdentified(snapshot: QuestionSnapshot): boolean {
   return snapshot.regionFound && snapshot.confidence !== 'none';
+}
+
+/**
+ * The identity key this observation offers, built exactly the way the detector's
+ * decider builds it, so "is there a position?" is asked about the same key the
+ * timer will be created with.
+ */
+function identityKeyOfSnapshot(snapshot: QuestionSnapshot): string | null {
+  return isIdentified(snapshot) ? identityKeyOf(snapshot) : null;
 }
 
 /**

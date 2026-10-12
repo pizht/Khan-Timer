@@ -904,8 +904,19 @@ describe('the card of a practice resumed after a switch', () => {
  * The identity upgrade on a real page load (measured live)
  * ================================================================== */
 
-describe('a question identified before its progress marker exists', () => {
-  it('keeps the time already on the clock when the marker appears', async () => {
+/**
+ * A real page load has the question region (about 1.3 s) before the footer's
+ * progress marker (about 1.5 s), so the extension sees a fingerprint - "content
+ * that looks like a question" - before the page can say WHICH question it is.
+ *
+ * Measured on khanacademy.org that gap is 20-200 ms, and a practice's start card
+ * can hold the previous question's region for much longer. The clock therefore
+ * starts at the POSITION, not at the region: the page-load stretch (and any
+ * start-card stretch) is never billed to the first question, and never shows up
+ * in the summary as a mysterious 暂停 0:01 (see the report this pins down).
+ */
+describe('a question region that carries no position yet', () => {
+  it('does not start the clock until the page says which question it is', async () => {
     const { data } = installChromeStorage();
 
     window.history.pushState({}, '', EXERCISE_A);
@@ -914,63 +925,79 @@ describe('a question identified before its progress marker exists', () => {
     await controller.init();
     await advance(4000);
 
-    // The page has not said WHERE in the exercise this question is, so nothing
-    // is shown yet (see "the panel appears only over a question being solved") -
-    // but the clock is already running, so the time spent waiting for the marker
-    // is not lost.
+    // Four seconds with a fingerprint only: no clock, no panel, no session, and
+    // therefore nothing that could end up as paused time on question 1.
     expect(panelVisible()).toBe(false);
+    expect(data[sessionKey(EXERCISE_A)]).toBeUndefined();
+    expect(savedRecords(data)).toHaveLength(0);
 
     renderProgress(0, 4);
-    await advance(1500);
+    await advance(2000);
 
-    // The clock carried on: it was never restarted at zero ...
+    // The clock starts here, from zero - the four seconds above belong to no
+    // question, so they are not counted (and not reported as a pause). Counting
+    // them would put ~6 s on a 2 s advance; the detector needs a tick to notice
+    // the marker, so the reading is never more than a tick short of the advance.
     expect(panelVisible()).toBe(true);
-    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
-    // ... and the fingerprint phase did not become a record of its own.
+    expect(displayedMs()).toBeGreaterThanOrEqual(500);
+    expect(displayedMs()).toBeLessThan(3000);
     expect(savedRecords(data)).toHaveLength(0);
 
     const session = savedSession(data, EXERCISE_A);
     expect(session['questionKey']).toBe('id:progress:1 of 4');
+    expect(session['pausedMs']).toBe(0);
     expect(typeof session['stemFingerprint']).toBe('string');
   });
 
-  it('resumes the accumulated time across a reload, while the page is still fingerprint-only', async () => {
+  it('resumes the accumulated time across a reload, without billing the load', async () => {
     const { data } = installChromeStorage();
 
     window.history.pushState({}, '', EXERCISE_A);
     setPage(loadingDom());
     controller = new ContentController();
     await controller.init();
-    await advance(4000);
+    // The marker renders; the detector notices it on the next tick. Six seconds
+    // so the running session crosses its periodic checkpoint (every 5 s while
+    // running, spec 5.3: never once per DOM mutation).
     renderProgress(0, 4);
-    await advance(1000);
-    expect(displayedMs()).toBeGreaterThanOrEqual(4000);
+    await advance(6000);
 
-    const parkedStem = savedSession(data, EXERCISE_A)['stemFingerprint'];
+    const parked = savedSession(data, EXERCISE_A);
+    const parkedStem = parked['stemFingerprint'];
+    // The stored value is the time THIS question was timed for, and nothing from
+    // the page load: six seconds minus at most one detector tick.
+    const parkedMs = parked['accumulatedMs'] as number;
+    expect(parkedMs).toBeGreaterThanOrEqual(3000);
+    expect(parkedMs).toBeLessThan(6500);
+    expect(parked['pausedMs']).toBe(0);
 
-    // Reload the page: the document starts fingerprint-only again.
+    // Reload the page: the document starts fingerprint-only again, and closing
+    // it flushes the session exactly as a real unload does.
+    window.dispatchEvent(new Event('pagehide'));
     controller.dispose();
     controller = null;
+    const beforeReload = savedSession(data, EXERCISE_A)['accumulatedMs'] as number;
     setPage(loadingDom());
     controller = new ContentController();
     await controller.init();
     await advance(1500);
 
-    // Hidden panel, because the page has not reported the question's position
-    // yet - but the clock is running and picked up the accumulated time rather
-    // than starting from zero.
+    // Still no question: nothing is timed, nothing is shown, and the stored
+    // session is untouched (it is not overwritten by a fingerprint phase).
     expect(panelVisible()).toBe(false);
-    expect(savedSession(data, EXERCISE_A)['accumulatedMs']).toBeGreaterThanOrEqual(4000);
+    expect(savedSession(data, EXERCISE_A)['accumulatedMs']).toBe(beforeReload);
 
-    // The fingerprint phase is written back to the SAME session, which is what
-    // lets the marker's arrival upgrade it instead of starting a new question.
-    const resumed = savedSession(data, EXERCISE_A);
-    expect(resumed['stemFingerprint']).toBe(parkedStem);
-
+    // The marker arrives: the same question resumes from the stored value, so
+    // the interruption cost nothing, and the page load is not added to it -
+    // which is also what keeps a 暂停 0:0x row out of the summary.
     renderProgress(0, 4);
     await advance(1500);
     expect(panelVisible()).toBe(true);
-    expect(displayedMs()).toBeGreaterThanOrEqual(5000);
+    const resumedMs = savedSession(data, EXERCISE_A)['accumulatedMs'] as number;
+    expect(resumedMs).toBeGreaterThanOrEqual(beforeReload);
+    expect(resumedMs).toBeLessThan(beforeReload + 6000);
+    expect(savedSession(data, EXERCISE_A)['pausedMs']).toBe(0);
+    expect(savedSession(data, EXERCISE_A)['stemFingerprint']).toBe(parkedStem);
   });
 });
 
@@ -1247,25 +1274,103 @@ describe('the panel appears only over a question being solved', () => {
     expect(diagnostics()).toMatchObject({ unidentified: false, enginePhase: 'running' });
   });
 
-  it('comes up when the learner starts the exercise from the intro card', async () => {
-    installChromeStorage();
+  it('comes up when the learner starts the exercise from the intro card, and question 1 keeps none of the intro time', async () => {
+    const { data } = installChromeStorage();
 
-    // The start card is up, with the leftover region and no position.
+    // The start card is up, with the leftover question region that carries no
+    // position - the state the report describes ("尚未开始" but content that
+    // looks like a question). It stays up for a good while, as it does when the
+    // learner reads it before pressing "Let's go".
     window.history.pushState({}, '', EXERCISE_A);
     setPage(startCardWithLeftoverRegionDom());
     controller = new ContentController();
     await controller.init();
-    await advance(3000);
+    await advance(30_000);
     expect(panelVisible()).toBe(false);
+    // No clock, no session: nothing at all is being timed yet.
+    expect(data[sessionKey(EXERCISE_A)]).toBeUndefined();
 
     // The learner presses "Let's go": the card goes, question 1 renders together
-    // with the progress marker. That is the confirmation the panel waits for.
+    // with the progress marker. That is the confirmation both the panel and the
+    // clock wait for.
     setPage(exerciseDom({ index: 0, total: 4 }));
     await advance(2000);
+
     expect(panelVisible()).toBe(true);
-    // The clock shows the time since the region appeared, i.e. it includes the
-    // stretch spent looking at the intro card. That is deliberate (time already
-    // measured is never thrown away) and recorded as known limitation 30.
-    expect(displayedMs()).toBeGreaterThanOrEqual(1000);
+    expect(diagnostics()).toMatchObject({
+      engineQuestionKey: 'id:progress:1 of 4',
+      enginePhase: 'running',
+    });
+    // Question 1 carries the time spent SOLVING it - the 30 s of intro card are
+    // not on it, and nothing was ever auto-paused, so its record will not show
+    // the 暂停 0:01 that this report was about.
+    const session = savedSession(data, EXERCISE_A);
+    expect(session['pausedMs']).toBe(0);
+    expect(session['accumulatedMs']).toBeLessThan(3000);
+
+    // Answer it correctly and let the page advance, so the record is written.
+    answerCorrectly(0);
+    await advance(300);
+    setPage(exerciseDom({ index: 1, total: 4, stem: 'Add. 251+608' }));
+    await advance(1500);
+
+    const records = savedRecords(data);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      questionIndex: 0,
+      endReason: 'answered-correct',
+      wasPaused: false,
+    });
+    expect(records[0]?.['pausedMs']).toBe(0);
+    expect(Number(records[0]?.['durationMs'])).toBeLessThan(8000);
+  });
+});
+
+/* ================================================================== *
+ * Leaving the page must not lose the last answer
+ * ================================================================== */
+
+/**
+ * The learner answers a question and closes the tab (or reloads, or walks to
+ * another page) before the next question renders.
+ *
+ * The record for a finished question is deliberately held back until the
+ * question actually changes, so the end-of-exercise card can include it. If the
+ * learner leaves first, nothing else will ever finalise it - so the unload hook
+ * has to write it, exactly as it already writes the resumable session.
+ */
+describe('closing the page right after answering', () => {
+  it('still stores the answer, with its time and no spurious pause', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5000);
+
+    // Answer it correctly: the clock stops and the record is held.
+    answerCorrectly(0);
+    await advance(1000);
+    expect(savedRecords(data)).toHaveLength(0);
+    expect(savedSession(data, EXERCISE_A)['phase']).toBe('finished');
+
+    // The learner closes the tab instead of advancing.
+    window.dispatchEvent(new Event('pagehide'));
+    await advance(1000);
+
+    const records = savedRecords(data);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      exerciseKey: EXERCISE_A,
+      questionKey: 'id:progress:1 of 4',
+      questionIndex: 0,
+      endReason: 'answered-correct',
+      wasPaused: false,
+    });
+    // The time it was solved for, and nothing paused: the page-load stretch was
+    // never timed, so there is no 暂停 0:01 on the first question.
+    expect(records[0]?.['pausedMs']).toBe(0);
+    expect(Number(records[0]?.['durationMs'])).toBeGreaterThanOrEqual(4000);
   });
 });

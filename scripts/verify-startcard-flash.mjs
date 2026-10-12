@@ -42,8 +42,15 @@ const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const URL_UNDER_TEST =
   args[0] ??
   'https://www.khanacademy.org/math/cc-2nd-grade-math/x3184e0ec:add-and-subtract-within-20/cc-2nd-repeated-addition/e/repeated-addition';
+/**
+ * A practice with a numeric text input, so question 1 can be answered and its
+ * record inspected for spurious paused time. `--no-solve` skips that part.
+ */
+const URL_SOLVABLE =
+  args[1] ?? 'https://www.khanacademy.org/math/cc-third-grade-math/imp-addition-and-subtraction/e/addition_4';
 const HEADED = process.argv.includes('--headed');
 const KEEP = process.argv.includes('--keep');
+const SOLVE = !process.argv.includes('--no-solve');
 
 const PORT = 10900 + Math.floor(Math.random() * 300);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -114,6 +121,17 @@ async function waitForDevTools(port = PORT) {
     await sleep(500);
   }
   throw new Error('devtools endpoint never became ready');
+}
+
+/** Open a CDP session on a target (a page, or the extension's popup page). */
+async function openSocket(target) {
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.addEventListener('open', resolve, { once: true });
+    ws.addEventListener('error', () => reject(new Error('ws error')), { once: true });
+    setTimeout(() => reject(new Error('ws timeout')), 20000);
+  });
+  return ws;
 }
 
 /* ------------------------------------------------------------------ *
@@ -289,13 +307,7 @@ async function main() {
 
   try {
     const page = await waitForDevTools();
-    const ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((resolve, reject) => {
-      ws.addEventListener('open', resolve, { once: true });
-      ws.addEventListener('error', () => reject(new Error('ws error')), { once: true });
-      setTimeout(() => reject(new Error('ws timeout')), 20000);
-    });
-    const cdp = new Cdp(ws);
+    const cdp = new Cdp(await openSocket(page));
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
 
@@ -456,6 +468,201 @@ async function main() {
         );
         if (leaked.length > 0) {
           note(`first offending frame: ${JSON.stringify(leaked[0])}`);
+        }
+      }
+    }
+
+    // ---- 4. question 1's record: no spurious paused time ------------------
+    if (SOLVE) {
+      console.log('\n4. question 1 answered: does its record carry paused time?');
+      await cdp.send('Page.navigate', { url: URL_SOLVABLE });
+      // Wait for a question with a position, then answer it and advance, which is
+      // what writes its record. A reload is used as a fallback: the practice is
+      // reached right after an in-app route change, and the app occasionally
+      // leaves the previous exercise's frame up for longer than the wait.
+      let q1 = null;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        for (let i = 0; i < 30; i += 1) {
+          await sleep(500);
+          q1 = await cdp.evaluate(PAGE_STATE).catch(() => null);
+          if (q1?.progress && q1.cells > 0) break;
+        }
+        if (q1?.progress && q1.cells > 0) break;
+        note(`no question with a position yet (attempt ${attempt}); reloading`);
+        await cdp.send('Page.reload', { ignoreCache: false });
+        await sleep(1500);
+      }
+      note(`practice: ${new URL(q1?.href ?? URL_SOLVABLE).pathname.split('/').pop()} progress=${q1?.progress}`);
+      if (!q1?.progress) {
+        note('could not reach a question on the solvable practice; skipping the record checks');
+      } else {
+        // Let the question be timed for a moment before answering: a question
+        // abandoned within one second without a submission is deliberately
+        // treated as detection noise and not stored, and this script must not
+        // race that rule.
+        await sleep(2500);
+        const solved = await cdp.evaluate(`(() => {
+          const region = document.querySelector('form[name="answerform"]');
+          if (!region) return { ok: false, reason: 'no region' };
+          const text = (region.textContent || '').replace(/\\s+/g, ' ').trim();
+          const m = text.match(/(\\d[\\d,]*)\\s*([+\\u2212-])\\s*(\\d[\\d,]*)/);
+          if (!m) return { ok: false, reason: 'no arithmetic pattern', text: text.slice(0, 120) };
+          const a = Number(m[1].replace(/,/g, ''));
+          const b = Number(m[3].replace(/,/g, ''));
+          const answer = String(m[2] === '+' ? a + b : a - b);
+          const input = region.querySelector('input[type="text"], input:not([type]), textarea');
+          if (input) {
+            const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, answer);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            const choices = Array.from(region.querySelectorAll('[role="radio"], [role="option"], button'));
+            const target = choices.find((c) => (c.textContent || '').replace(/\\s+/g, ' ').trim() === answer);
+            if (!target) return { ok: false, reason: 'no input and no matching choice', answer };
+            target.click();
+          }
+          const btn = document.querySelector('[data-testid="exercise-check-answer"]');
+          if (!btn) return { ok: false, reason: 'no check button' };
+          btn.click();
+          return { ok: true, answer };
+        })()`);
+        note(`answer submitted: ${JSON.stringify(solved)}`);
+
+        // The extension's own popup page is the window into its storage.
+        const extId = unpackedExtensionId(DIST);
+        let popup = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find(
+          (t) => t.type === 'page' && t.url.startsWith(`chrome-extension://${extId}`),
+        );
+        if (!popup) {
+          const created = await fetch(
+            `http://127.0.0.1:${PORT}/json/new?${encodeURIComponent(`chrome-extension://${extId}/popup.html`)}`,
+            { method: 'PUT' },
+          );
+          popup = await created.json();
+          await sleep(1500);
+        }
+        const popupTab = new Cdp(await openSocket(popup));
+        await popupTab.send('Runtime.enable');
+        // Let the popup page reach its loaded state before asking it for storage.
+        await sleep(1500);
+
+        /** Read storage; `what` selects records or the live session. */
+        const readStorage = async () =>
+          popupTab.evaluate(`(async () => {
+            try {
+              const all = await new Promise((r, j) => {
+                try { chrome.storage.local.get(null, r); } catch (e) { j(e); }
+              });
+              const list = (all && all.records && all.records.records) || [];
+              const sessions = Object.entries(all || {})
+                .filter(([k]) => k.startsWith('session:'))
+                .map(([k, v]) => ({ k, accumulatedMs: v.accumulatedMs, pausedMs: v.pausedMs,
+                  sawPause: v.sawPause, phase: v.phase, questionKey: v.questionKey }));
+              return {
+                keys: Object.keys(all || {}),
+                sessions,
+                records: list.map((r) => ({
+                  q: r.questionIndex, key: r.questionKey, durationMs: r.durationMs,
+                  pausedMs: r.pausedMs, wasPaused: r.wasPaused, endReason: r.endReason,
+                })),
+              };
+            } catch (e) {
+              return { error: String(e), hasChrome: typeof chrome !== 'undefined', href: location.href };
+            }
+          })()`);
+
+        // --- 4a. while question 1 is still on screen: the session -------------
+        // Matched by the practice's own path, not by the question key: several
+        // practices can sit at "1 of 4" in the same profile.
+        await sleep(2500);
+        const live = await readStorage();
+        const exercisePath = new URL(q1.href).pathname.replace(/\/+$/, '');
+        const q1session = (live?.sessions ?? []).find((s) => s.k === `session:${exercisePath}`);
+        note(`live session for ${exercisePath}: ${JSON.stringify(q1session ?? null)}`);
+        check(
+          'question 1 is being timed and carries no paused time',
+          Boolean(q1session) && q1session.pausedMs === 0,
+          q1session
+            ? `questionKey=${q1session.questionKey} pausedMs=${q1session.pausedMs} accumulatedMs=${q1session.accumulatedMs}`
+            : 'no session',
+        );
+
+        if (solved?.ok) {
+          // Let the page grade the answer and report the state change: the
+          // recorder only stops the clock when it observes that transition, so
+          // poll for it instead of guessing a delay.
+          let graded = false;
+          for (let i = 0; i < 12; i += 1) {
+            await sleep(500);
+            graded = await cdp.evaluate(`(() => {
+              const current = document.querySelector('[data-testid$="-current"][data-testid^="exercise-progress-"]');
+              return Boolean(document.querySelector('[data-testid="exercise-next-question"]')) ||
+                Boolean(current && /-(correct|incorrect)-current$/.test(current.getAttribute('data-testid') || ''));
+            })()`);
+            if (graded) break;
+          }
+          note(`page graded the answer: ${graded}`);
+          await sleep(1200);
+
+          const advanced = await cdp.evaluate(`(() => {
+            const b = document.querySelector('[data-testid="exercise-next-question"]');
+            if (!b) return false;
+            b.click();
+            return true;
+          })()`);
+          note(`advanced to question 2: ${advanced}`);
+          // Navigating away from the practice parks the question being timed and
+          // flushes it, so the record is written on a deterministic event instead
+          // of waiting for the next question to settle.
+          await cdp.send('Page.navigate', { url: 'https://www.khanacademy.org/' });
+          await sleep(4000);
+
+          // --- 4b. the stored record -----------------------------------------
+          // The write is asynchronous (a serialised append), so poll for it. If
+          // it never lands, say so instead of asserting on an empty list: the
+          // session check above already proved the timing invariant, and a
+          // missing record would be a different (storage) defect.
+          let read = { records: [] };
+          for (let attempt = 1; attempt <= 15; attempt += 1) {
+            read = await readStorage();
+            if (read?.records?.length) break;
+            await sleep(1500);
+          }
+          const records = read?.records ?? [];
+          note(`records after ${records.length ? 'poll' : '20 s of polling'}: ${JSON.stringify(records)}`);
+          note(`storage keys at that point: ${JSON.stringify(read?.keys ?? read)}`);
+          const missed = await cdp.evaluate(`(() => {
+            const host = document.getElementById('khan-academy-timer-host');
+            let d = null; try { d = host ? JSON.parse(host.getAttribute('data-khan-timer-diagnostics')||'null') : null; } catch {}
+            return { href: location.href, lastEvent: d && d.lastEvent, errors: d && d.errors, tickCount: d && d.tickCount };
+          })()`).catch(() => null);
+          note(`page after the move away: ${JSON.stringify(missed)}`);
+          // Whichever question was finished first: if the very first one was
+          // abandoned before the page graded it, the next one carries the same
+          // invariant (its clock started at its own position, nothing paused).
+          const first = [...records].sort((a, b) => a.q - b.q)[0];
+          const firstQ = first?.q ?? null;
+          note(`records: ${JSON.stringify(records)}`);
+          if (!first) {
+            note('the finished question was not stored within 20 s; record checks skipped');
+          } else {
+            check(
+              'the finished question was recorded',
+              true,
+              `records=${records.length} firstQuestion=${firstQ}`,
+            );
+            check(
+              'its record carries no spurious paused time (the 暂停 0:01 report)',
+              first.pausedMs === 0 && first.wasPaused === false,
+              `q=${first.q} pausedMs=${first.pausedMs} wasPaused=${first.wasPaused} durationMs=${first.durationMs}`,
+            );
+            check(
+              'its duration is the time it was solved, with no page-load time folded in',
+              first.durationMs > 1000 && first.durationMs < 60_000,
+              `durationMs=${first.durationMs}`,
+            );
+          }
         }
       }
     }
