@@ -6,7 +6,7 @@ and a "time per question" card on the end-of-exercise screen. Manifest V3 + Type
 loadable in **Chrome and Edge** (Chromium 114+); all data stays on the local machine.
 
 > **This file is for maintainers.** Installation and usage are covered by the
-> **[user guide](../README.md)**, which is bilingual (English first, then Simplified Chinese).
+> **[user guide](../README.md)** (English) and its **[Simplified Chinese version](../README.zh-CN.md)**.
 
 **Two hard constraints** — do not break either one; `scripts/verify-dist.mjs` asserts both
 mechanically:
@@ -135,7 +135,7 @@ public/                    # manifest.json, popup.html/css, _locales/, icons/ (c
 scripts/                   # build + icon generation + the verification scripts
 scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
 tests/                     # vitest (8 files)
-docs/                      # this developer guide and the i18n notes (the user guide is the root README.md)
+docs/                      # this developer guide and the i18n notes (the user guide is README.md / README.zh-CN.md)
 assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
 
@@ -217,7 +217,8 @@ permissions. `verify-dist.mjs` treats this as a hard check.
 
 | Document | Reader | Content |
 |---|---|---|
-| [`README.md`](../README.md) | **users** | The user guide on the repo home page: downloading the ZIP from a release and importing it into Chrome / Edge, usage, settings, privacy, troubleshooting (bilingual, English first) |
+| [`README.md`](../README.md) | **users** | The user guide on the repo home page (English, the default entry point): downloading the ZIP from a release and importing it into Chrome / Edge, usage, settings, privacy, troubleshooting |
+| [`README.zh-CN.md`](../README.zh-CN.md) | **users** | The same user guide in Simplified Chinese; the two README files link to each other |
 | [`docs/i18n.md`](i18n.md) | maintainers | The i18n design, language resolution, and **the steps to add another language** |
 | [`AGENTS.md`](../AGENTS.md) | AI agents / maintainers | Must-read before changing a selector: how to capture the real DOM yourself instead of inferring it |
 | this file (`docs/development.md`) | maintainers | Architecture and invariants, verification and CI, project layout, permissions, releasing, troubleshooting |

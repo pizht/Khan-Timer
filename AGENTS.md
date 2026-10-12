@@ -126,7 +126,8 @@ assertion is stale" (fix the assertion) before changing either.
 | `scripts/capture/` | Live-site capture + sanitisation tools. |
 | `public/` | `manifest.json`, popup, `_locales/`, generated icons. |
 | `assets/logo.png` | Source art for `pnpm run icons`. |
-| `README.md` | The **user** guide (install from the release ZIP, settings, privacy, FAQ). Bilingual, English first. |
+| `README.md` | The **user** guide, English — the repository's front page: install from the release ZIP, settings, privacy, FAQ. |
+| `README.zh-CN.md` | The same user guide in Simplified Chinese; the two README files link to each other. |
 | `docs/development.md` | The **developer** guide: architecture and invariants, commands, verification layers, release process, permissions, troubleshooting. |
 | `docs/i18n.md` | i18n design notes and how to add another language. |
 | `.github/workflows/` | `verify.yml` (offline gate), `e2e.yml` (manual), `release.yml`. |
@@ -147,10 +148,6 @@ assertion is stale" (fix the assertion) before changing either.
 - Some of the `scripts/capture/cdp-*.mjs` scripts are one-off investigation
   probes rather than polished tools; the maintained verification path is
   `scripts/verify-*.mjs`.
-- The original requirements document cited by older docs as "需求文档第 N 节"
-  ("requirements document, section N") is **no longer in this repository**, and
-  neither are the files that cited it. Treat any surviving mention as historical
-  context.
 - There is no maintained list of "known limitations". The authoritative
   statements are the runtime degradation behaviour (visible in the panel) and
   the assertions in `tests/`.
