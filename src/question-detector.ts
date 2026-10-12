@@ -557,7 +557,7 @@ export class QuestionDetector {
    * A re-attached region is then evaluated IMMEDIATELY, not left to the next
    * poll. The progress marker does not move when the SAME question is
    * re-rendered, so nothing else would ever re-run detection: the extension
-   * would stay in 识别：未识别 with its panel hidden even though the question is
+   * would stay unidentified with its panel hidden even though the question is
    * back on screen (found by `tests/controller.test.ts`).
    */
   private onBodyMutation(): void {
@@ -879,8 +879,8 @@ export class QuestionDetector {
    * change would never be committed.
    *
    * Found by scripts/verify-extension.mjs: the panel reported
-   * "检测到可能的题目变化，等待确认…" and then stayed there indefinitely while the
-   * old question's timer kept running.
+   * "Possible question change detected, confirming…" and then stayed there
+   * indefinitely while the old question's timer kept running.
    */
   private armPendingConfirmation(event: DetectionEvent): void {
     if (event.type !== 'pending') {

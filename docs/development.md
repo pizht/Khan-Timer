@@ -1,235 +1,255 @@
-# Khan Academy Timer — 开发者说明
+# Khan Academy Timer — Developer Guide
 
-给可汗学院（Khan Academy）练习题与测验做的**题目计时**扩展：自动识别当前题目并计时，
-支持正计时 / 倒计时、暂停 / 继续 / 重置、页内悬浮面板，以及结束页的「本轮每题用时」卡片。
-Manifest V3 + TypeScript + esbuild，在 **Chrome 与 Edge**（Chromium 114+）上加载，
-数据只存本机。
+A **per-question timer** for Khan Academy exercises and quizzes: it detects the question being
+solved and times it, with count-up / countdown, pause / resume / reset, an in-page floating panel
+and a "time per question" card on the end-of-exercise screen. Manifest V3 + TypeScript + esbuild,
+loadable in **Chrome and Edge** (Chromium 114+); all data stays on the local machine.
 
-> **本文件面向维护者。** 安装与使用说明在 **[用户指南（English / 简体中文）](../README.md)**。
-> *Looking to install it? See the **[User Guide](../README.md)**.*
+> **This file is for maintainers.** Installation and usage are covered by the
+> **[user guide](../README.md)**, which is bilingual (English first, then Simplified Chinese).
 
-**两条硬约束**（改动时不得破坏，`scripts/verify-dist.mjs` 会逐条机器断言）：
+**Two hard constraints** — do not break either one; `scripts/verify-dist.mjs` asserts both
+mechanically:
 
-1. **产物里没有任何网络代码**：`dist/*.js` 中出现 `fetch` / `XMLHttpRequest` / `WebSocket` /
-   `EventSource` / `sendBeacon` / `eval` / `new Function` / `importScripts` / 远程脚本注入 /
-   绝对 http(s) 地址，构建校验即失败。
-2. **权限只有 `storage` + `activeTab`**，内容脚本只匹配 `khanacademy.org`；
-   没有 `host_permissions`、没有 background worker、没有 `web_accessible_resources`。
-
----
-
-## 目录
-
-- [快速开始](#快速开始)
-- [命令](#命令)
-- [架构与不变量](#架构与不变量)
-- [代码结构](#代码结构)
-- [验证与 CI](#验证与-ci)
-- [发布](#发布)
-- [权限](#权限)
-- [文档地图](#文档地图)
-- [故障排查](#故障排查)
+1. **No network code in the build.** If any of `fetch`, `XMLHttpRequest`, `WebSocket`,
+   `EventSource`, `sendBeacon`, `eval`, `new Function`, `importScripts`, remote script injection or
+   an absolute http(s) URL appears in `dist/*.js`, the build check fails.
+2. **Only `storage` + `activeTab` as permissions**, with the content script matching
+   `khanacademy.org` only: no `host_permissions`, no background worker, no
+   `web_accessible_resources`.
 
 ---
 
-## 快速开始
+## Contents
 
-需要 Node.js ≥ 20；包管理器 pnpm 的版本由 `package.json` 的 `packageManager` 固定
-（`corepack enable` 后自动生效）。
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [Architecture and invariants](#architecture-and-invariants)
+- [Code layout](#code-layout)
+- [Verification and CI](#verification-and-ci)
+- [Releasing](#releasing)
+- [Permissions](#permissions)
+- [Documentation map](#documentation-map)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick start
+
+Node.js ≥ 20. The pnpm version is pinned by `packageManager` in `package.json`
+(`corepack enable` makes that take effect automatically).
 
 ```bash
 pnpm install
-pnpm run build      # 生成 dist/
-pnpm run verify     # 离线全量校验：类型检查 + 单元测试 + 构建 + 产物检查
+pnpm run build      # produce dist/
+pnpm run verify     # full offline check: typecheck + unit tests + build + dist checks
 ```
 
-浏览器里调试：`chrome://extensions` 或 `edge://extensions` → 打开**开发者模式** →
-**加载已解压的扩展** → 选 **`dist/`**。**浏览器只加载 `dist/`，`src/` 是源码。**
+To debug in a browser: `chrome://extensions` or `edge://extensions` → turn on **Developer mode** →
+**Load unpacked** → select **`dist/`**. **Browsers only ever load `dist/`; `src/` is the source.**
 
-改了源码之后的三步：`pnpm run build` → 扩展页点卡片上的**重新加载**（↻）→ 刷新可汗学院页面。
-浏览器不会自己感知 `dist/` 的变化。
+After changing source there are three steps: `pnpm run build` → click the **reload** (↻) icon on the
+extension card → refresh the Khan Academy tab. Browsers do not notice changes in `dist/` on their own.
 
 ---
 
-## 命令
+## Commands
 
-| 命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `pnpm run build` | esbuild 打包到 `dist/`（**刻意不压缩**，同时输出 source map，便于人工审查「没有数据上传」） |
-| `pnpm run build:watch` | 监听源码变化自动重建 |
-| `pnpm run typecheck` | `tsc --noEmit`（严格模式） |
-| `pnpm run test` / `test:watch` | vitest（jsdom；`chrome.storage` 用内存替身） |
-| `pnpm run verify` | typecheck + test + build + `verify-dist.mjs`，**完全离线**，可当提交门禁 |
-| `pnpm run icons` | 从 `assets/logo.png` 重新生成 `public/icons/*.png`（只用 Node 内置 `zlib`，无图像依赖） |
-| `pnpm run verify:edge` | 真实 Edge 端到端：加载 `dist/`，驱动线上练习页，读 Shadow DOM |
-| `pnpm run verify:startcard` | 真实 Edge：练习起始页不闪面板 + 第 1 题无多余暂停用时 |
-| `pnpm run verify:practice-switch` | 真实 Edge：练习 A → B → 回到 A 做完整轮（结束页卡片需登录，见脚本头注释） |
+| `pnpm run build` | Bundles with esbuild into `dist/` (**deliberately unminified**, with source maps, so a human can review the "no data is uploaded" claim) |
+| `pnpm run build:watch` | Rebuilds on source changes |
+| `pnpm run typecheck` | `tsc --noEmit` (strict) |
+| `pnpm run test` / `test:watch` | vitest (jsdom; `chrome.storage` is replaced by an in-memory double) |
+| `pnpm run verify` | typecheck + test + build + `verify-dist.mjs`, **fully offline** — usable as a commit gate |
+| `pnpm run icons` | Regenerates `public/icons/*.png` from `assets/logo.png` (Node's built-in `zlib` only, no image dependency) |
+| `pnpm run verify:edge` | Real Edge end to end: loads `dist/`, drives the live exercise page, reads the panel's Shadow DOM |
+| `pnpm run verify:startcard` | Real Edge: no panel flash on the practice start card + no spurious paused time on question 1 |
+| `pnpm run verify:practice-switch` | Real Edge: practice A → B → back to A to finish the attempt (the summary card needs a signed-in session; see the script header) |
 
-三个真实浏览器脚本按 `EDGE_PATH` → 平台默认安装位置 → `PATH`
-的顺序定位浏览器，解析逻辑集中在 [`scripts/lib/browser.mjs`](../scripts/lib/browser.mjs)；
-非默认安装位置时：
+The three real-browser scripts resolve the browser in the order `EDGE_PATH` → platform default
+install location → `PATH`; the logic lives in
+[`scripts/lib/browser.mjs`](../scripts/lib/browser.mjs). For a non-default location:
 
 ```bash
 EDGE_PATH="/path/to/msedge" pnpm run verify:edge
 ```
 
-找不到浏览器时脚本会在启动任何进程**之前**报错并列出试过的路径。
+When no browser is found, the script fails **before** starting any process and lists every path it
+tried.
 
 ---
 
-## 架构与不变量
+## Architecture and invariants
 
-下面这些行为是在真实页面上实测得到、并被单元测试锁定的。**改识别、计时或存储前先读对应测试**，
-否则很容易把已修好的缺陷改回来。每条的「为什么」都写在对应源码注释里，改选择器前请先按
-[`AGENTS.md`](../AGENTS.md) 自己抓一份真实 DOM。
+The behaviours below were established empirically on the live site and are locked down by unit
+tests. **Read the matching test before changing detection, timing or storage** — it is easy to
+reintroduce a bug that was already fixed. The "why" for each one lives in the source comments; before
+changing a selector, capture a fresh copy of the real DOM as described in
+[`AGENTS.md`](../AGENTS.md).
 
-| 不变量 | 说明 | 主要位置 |
+| Invariant | Explanation | Main location |
 |---|---|---|
-| **题目标识 = 进度索引** | 身份取自 `exercise-progress-<索引>-<状态>` 的**索引**，不含状态段 —— 状态在每次提交答案时变化，算进去就会「一答题就换题」。站点不提供单题稳定 id。 | `question-detector.ts`、`site-profile.ts` |
-| **身份升级不等于切题** | 加载时题目区域先出现（只有文本指纹）、进度标记后出现（约 20–190 ms）。这是**同一道题的身份升级**，必须保留引擎与会话，否则每题都会在 1 秒后从 0 重来。 | `question-detector.ts` |
-| **计时从「页面报出第几题」开始** | 区域已渲染但没有位置时：不显示面板、不计时、不产生暂停用时。这条修掉了「第 1 题莫名多出 `暂停 0:01`」。 | `controller.ts` |
-| **面板只在确实做题时出现** | 宿主 `#khan-academy-timer-host` 挂载时即 `display:none`，位置报出后才由渲染循环打开；起始卡片、课程页、视频页上都不显示，也不会闪一下。 | `overlay.ts`、`controller.ts` |
-| **识别失败 = 暂停，不是重置** | 找不到题目区域或无身份信号时：隐藏面板 + **暂停**本题（引擎、累计用时、第一次提交时间戳、`runId` 全部保留），同一道题回来即从暂停处继续；**学生手动按的暂停不会被自动继续**。这段不计入用时，但本题仍出现在结束页统计里。 | `controller.ts`、`timer-engine.ts` |
-| **停表条件** | 答对（状态 `correct`，或 Check 按钮被下一题控件取代 —— 因为进度标记只保留**第一次**作答的判定，答错后重答正确不会变状态）与确认 Skip 停表；答错、点 Cancel、选中选项、输入答案都不停表。 | `controller.ts` |
-| **时间语义** | 用时全部由时间戳差分得出，不依赖定时器触发次数（后台标签页、休眠后恢复都正确）。关闭页面或离开练习期间**冻结**；`session:<练习路径>` 每个练习一份，TTL 12 小时，只按「练习 + 题目」都匹配才续接。 | `timer-engine.ts`、`storage.ts` |
-| **单页应用换练习立刻作废旧身份** | 地址变化即作废识别状态：新练习的第一题即使进度一样也必须是新题，否则旧练习的读数会继续涨。 | `controller.ts` |
-| **结束页取数三层** | `exerciseKey`（哪套题）→ `attempt:<练习路径>`（本次尝试窗口，只有真的看过结束页才推进）→ `runId`。卡片按**题号**排列，缺数据的题号保留并标「数据缺失」，不会把下一题的用时顶上来；加试题排在编号题之后。 | `summary-view.ts`、`storage.ts` |
-| **记录写入串行** | `chrome.storage` 没有事务，「读出→追加→写回」并发会互相覆盖（结束页少一行）。所有写入串到一条队列，读方先 `flush()`。 | `storage.ts` |
-| **i18n：`en.ts` 是键的真源** | `MessageKey` 由 `src/i18n/en.ts` 派生，其它语言是 `Record<MessageKey, string>`，**漏译编译不过**；`_locales/` 只放扩展名与描述。 | `src/i18n/`、[`docs/i18n.md`](i18n.md) |
-| **版本号只有一个来源** | `scripts/build.mjs` 把 `package.json` 的 `version` 写进 `dist/manifest.json`；manifest 只接受纯数字点号版本。 | `scripts/build.mjs` |
+| **Question identity = progress index** | Identity is the **index** in `exercise-progress-<index>-<state>`, never the state segment — the state changes on every answer submission, so including it would mean "answering a question counts as a question change". The site exposes no stable per-question id. | `question-detector.ts`, `site-profile.ts` |
+| **An identity upgrade is not a question change** | On load the question region appears first (text fingerprint only) and the progress marker ~20–190 ms later. That is an **identity upgrade of the same question** and must preserve the engine and the session, otherwise every question would restart from zero a second after loading. | `question-detector.ts` |
+| **Timing starts when the page reports the question number** | While the region is rendered but no position is known: no panel, no timing, no accumulated paused time. This removed the phantom `Paused 0:01` on question 1. | `controller.ts` |
+| **The panel only appears over a question being solved** | The host `#khan-academy-timer-host` mounts as `display:none` and is only shown by the render loop once a position is reported; it stays hidden on start cards, lesson pages and videos, and never flashes. | `overlay.ts`, `controller.ts` |
+| **Detection failure = pause, not reset** | When the question region or any identity signal is missing: hide the panel and **pause** the question (engine, accumulated time, first-submission timestamp and `runId` are all kept), then resume from the paused value when the same question returns; **a pause the learner asked for is never auto-resumed**. The unreadable stretch is not counted as time, but the question still appears in the end-of-exercise summary. | `controller.ts`, `timer-engine.ts` |
+| **When the clock stops** | A correct answer (state `correct`, or the Check button being replaced by the next-question control — the progress marker keeps only the **first** submission's verdict, so a wrong-then-correct retry does not change it) and a confirmed Skip stop the clock; a wrong answer, a cancelled Skip, selecting an option or typing an answer do not. | `controller.ts` |
+| **Time semantics** | Elapsed time is always derived from timestamp differences, never from timer ticks (background tabs and post-sleep wake-ups stay correct). The clock **freezes** while the page is closed or the learner is away from the practice; `session:<practice path>` is stored per practice with a 12-hour TTL and only resumes when both the practice and the question match. | `timer-engine.ts`, `storage.ts` |
+| **A practice switch in the SPA invalidates the old identity immediately** | Any address change invalidates detection state: the first question of a new practice must be a new question even if the progress index is identical, otherwise the old practice's readout keeps climbing. | `controller.ts` |
+| **The summary card reads through three layers** | `exerciseKey` (which set of questions) → `attempt:<practice path>` (the current attempt window, only advanced once the summary screen was really seen) → `runId`. Rows are ordered by **question number**; a question number with no data keeps its row and is tagged `No data` rather than pulling the next question's time up into it; bonus questions sort after the numbered ones. | `summary-view.ts`, `storage.ts` |
+| **Record writes are serialised** | `chrome.storage` has no transactions, so concurrent "read → append → write back" cycles overwrite each other (a missing row on the summary card). All writes go through one queue and readers `flush()` it first. | `storage.ts` |
+| **i18n: `en.ts` is the source of truth for keys** | `MessageKey` is derived from `src/i18n/en.ts`; every other language is a `Record<MessageKey, string>`, so **a missing translation fails to compile**; `_locales/` only holds the extension name and description. | `src/i18n/`, [`docs/i18n.md`](i18n.md) |
+| **One source for the version number** | `scripts/build.mjs` writes `package.json`'s `version` into `dist/manifest.json`; the manifest only accepts plain dotted-numeric versions. | `scripts/build.mjs` |
 
-去抖与冷却的默认值（可在设置里覆盖，弹窗不暴露）：新身份需连续稳定
-**400 ms**、且距上次已接受的切换 **≥ 1200 ms**；候选出现后会安排一次延后复核。
+Debounce and cooldown defaults (overridable in settings, not exposed in the popup): a new identity
+must stay stable for **400 ms** and be **≥ 1200 ms** after the last accepted change; once a candidate
+appears, the detector schedules one deferred re-check.
 
-识别细节的设计依据（题目区域选择器、提示展开不重置计时、`Start over` 视为新题等）
-以源码注释为准：`src/site-profile.ts` 里每条选择器都标了它是怎么确立的
-（`[OBS]` 实采观察 / `[VER]` 真机驱动验证 / `[STD]` 平台标准钩子）。
+The design rationale for detection details (which container is the question region, why opening a
+hint does not reset the timer, why `Start over` counts as a new question, …) lives in the source
+comments: every selector in `src/site-profile.ts` is tagged with how it was established
+(`[OBS]` observed on the live site / `[VER]` verified by driving a real browser / `[STD]` platform
+standard hook).
 
 ---
 
-## 代码结构
+## Code layout
 
 ```text
 src/
-├── content.ts             # 内容脚本入口（无副作用，只启动协调器）
-├── controller.ts          # 计时协调器：识别事件 → 计时 / 记录 / 会话 / 结束页
-├── question-detector.ts   # 题目识别：纯决策逻辑 + DOM 适配器
-├── site-profile.ts        # ★ 所有站点选择器与适配规则集中于此
-├── timer-engine.ts        # 正计时/倒计时状态机（纯逻辑，时钟可注入）
-├── storage.ts             # 设置、记录、进行中会话、写入队列
-├── overlay.ts             # 页内悬浮面板（Shadow DOM）
-├── summary-view.ts        # 结束页的「本轮每题用时」卡片（Shadow DOM）
-├── popup.ts               # 扩展弹出面板逻辑
-├── i18n/                  # 全部界面文案：en.ts 真源 + zh-CN.ts 译文 + t()/localizeDom()
-├── sound.ts               # 超时提示音（Web Audio 现场合成，无音频文件）
-├── types.ts / util.ts     # 共享类型 / 指纹哈希与通用工具
-public/                    # manifest.json、popup.html/css、_locales/、icons/（构建时整体复制）
-scripts/                   # build + 图标生成 + 四层验证脚本
-scripts/capture/           # 真实站点抓 DOM / 脱敏（AI agent 与维护者用，见 AGENTS.md）
-tests/                     # vitest（8 个文件）
-docs/                      # 本开发者说明与 i18n 说明（用户指南是根目录的 README.md）
-assets/logo.png            # 图标原图，pnpm run icons 由它生成 public/icons/
+├── content.ts             # content-script entry (no side effects; starts the controller)
+├── controller.ts          # timing controller: detection events → timing / records / sessions / summary
+├── question-detector.ts   # question detection: pure decision logic + DOM adapter
+├── site-profile.ts        # ★ every site selector and adaptation rule lives here
+├── timer-engine.ts        # count-up/countdown state machine (pure logic, injectable clock)
+├── storage.ts             # settings, records, in-flight sessions, write queue
+├── overlay.ts             # in-page floating panel (Shadow DOM)
+├── summary-view.ts        # "time per question in this attempt" card (Shadow DOM)
+├── popup.ts               # extension popup logic
+├── i18n/                  # all UI copy: en.ts source of truth + zh-CN.ts translation + t()/localizeDom()
+├── sound.ts               # countdown tone (synthesised with Web Audio, no audio files)
+├── types.ts / util.ts     # shared types / fingerprint hashing and helpers
+public/                    # manifest.json, popup.html/css, _locales/, icons/ (copied wholesale at build time)
+scripts/                   # build + icon generation + the verification scripts
+scripts/capture/           # live-site DOM capture / sanitisation (for AI agents and maintainers, see AGENTS.md)
+tests/                     # vitest (8 files)
+docs/                      # this developer guide and the i18n notes (the user guide is the root README.md)
+assets/logo.png            # icon source art; pnpm run icons generates public/icons/ from it
 ```
 
-抓取到的 DOM 数据（原始抓取、脱敏摘录、截图）**刻意不进版本库**，一律落在
-`.gitignore` 忽略的 `.tmp-caps/`：它们会随可汗学院改版立即过期，而一份看起来仍权威的
-过期样本比没有样本更危险。需要时按 [`AGENTS.md`](../AGENTS.md) 里的两条命令重新采集即可
-（该路径可复现：实测相隔数天的两次采集字节完全一致）。采集得到的设计结论不单独存档，
-而是直接写在源码注释里——`src/site-profile.ts` 每条选择器都标了来源等级，读代码即可看到
-「为什么」。同理，**未验证的页面类型不单独维护清单**：扩展遇到不认识的页面会明确说
-「未识别」并暂停计时，行为本身就是声明。
+Captured DOM data (raw captures, sanitised excerpts, screenshots) is **deliberately not versioned**
+and always lands in the gitignored `.tmp-caps/`: it goes stale the moment Khan Academy ships a
+change, and a stale sample that still looks authoritative is worse than no sample. Re-capture when
+needed with the two commands in [`AGENTS.md`](../AGENTS.md) (that path is reproducible — two
+captures taken days apart were byte-identical). The design conclusions drawn from those captures are
+not archived separately; they are written straight into the source comments, so reading
+`src/site-profile.ts` (where each selector carries a provenance tag) shows the "why". For the same
+reason, **there is no maintained list of unverified page types**: when the extension meets a page it
+cannot read, it says so and pauses the clock — the behaviour is the statement.
 
-`site-profile.ts` 集中全部站点选择器与适配规则：站点改版时只改这一处，不要在选择器散落到
-各模块；`dist/` 是纯构建产物，`.gitignore` 忽略。
+`site-profile.ts` holds every site selector and adaptation rule: when the site changes, edit that one
+file and do not scatter selectors into other modules. `dist/` is pure build output and is gitignored.
 
 ---
 
-## 验证与 CI
+## Verification and CI
 
-四层验证中的三层可以随时重跑：前两层完全离线，真实浏览器层需要本机 Edge 与网络，
-手动步骤另见下。
+Three of the four verification layers can be re-run at any time: the first two are fully offline, the
+real-browser layer needs a local Edge and network access, and the remaining manual steps are listed
+with the `verify:*` commands.
 
-| 层 | 命令 | 当前规模 | 覆盖 |
+| Layer | Command | Current size | Coverage |
 |---|---|---|---|
-| 单元测试 | `pnpm run test` | **271 用例 / 8 文件** | 计时引擎、识别决策与 DOM 适配、协调器（jsdom 端到端，含切练习与结束页题号模型）、存储与写入队列、结束页行序模型、面板/弹窗、i18n |
-| 产物检查 | `node scripts/verify-dist.mjs` | **61 项** | manifest 可解析且引用文件存在、权限允许清单、内容脚本匹配范围、`dist/*.js` 无网络/动态执行代码、图标尺寸、`_locales` 与 `__MSG_*` 可解析 |
-| 真实浏览器 | `pnpm run verify:edge`、`verify:startcard`、`verify:practice-switch` | 端到端 | 把 `dist/` 作为解压扩展加载进真实 Edge，经 CDP 读面板 Shadow DOM 与 `chrome.storage.local` |
+| Unit tests | `pnpm run test` | **271 cases / 8 files** | timer engine, detection decisions and DOM adapter, controller (jsdom end to end, including practice switching and the summary row model), storage and the write queue, summary row ordering, panel/popup, i18n |
+| Build check | `node scripts/verify-dist.mjs` | **61 checks** | manifest parses and every file it references exists, permission allowlist, content-script match scope, no network/dynamic-execution code in `dist/*.js`, icon sizes, `_locales` and every `__MSG_*` resolves |
+| Real browser | `pnpm run verify:edge`, `verify:startcard`, `verify:practice-switch` | end to end | loads `dist/` as an unpacked extension into real Edge and reads the panel's Shadow DOM and `chrome.storage.local` over CDP |
 
-真实浏览器里难以稳定制造的场景（例如「识别失败 → 暂停 → 恢复」）已尽可能改写成 jsdom
-端到端用例，见 `tests/controller.test.ts` 的 *pauses instead of resetting when the question
-region disappears and comes back*；剩下的手动步骤在上面三条 `verify:*` 命令的输出里按提示操作。
+Scenarios that are hard to reproduce reliably in a real browser (for example "detection fails →
+pause → resume") have been rewritten as jsdom end-to-end cases where possible — see
+*pauses instead of resetting when the question region disappears and comes back* in
+`tests/controller.test.ts`. For the rest, follow the prompts printed by the three `verify:*` commands.
 
-工作流：
+Workflows:
 
-| 工作流 | 触发 | 内容 |
+| Workflow | Trigger | What it runs |
 |---|---|---|
-| [`verify.yml`](../.github/workflows/verify.yml) | push / PR（+ 手动） | `pnpm run verify`，全离线，当提交门禁 |
-| [`e2e.yml`](../.github/workflows/e2e.yml) | 只手动 | 在 runner 上装 Edge，跑 `pnpm run verify:edge`（联网、驱动线上站点，不该拦住普通提交） |
-| [`release.yml`](../.github/workflows/release.yml) | 推 `v*` tag | 见下节 |
+| [`verify.yml`](../.github/workflows/verify.yml) | push / PR (+ manual) | `pnpm run verify`, fully offline, as the commit gate |
+| [`e2e.yml`](../.github/workflows/e2e.yml) | manual only | installs Edge on the runner and runs `pnpm run verify:edge` (needs network and drives the live site, so it must not gate ordinary commits) |
+| [`release.yml`](../.github/workflows/release.yml) | pushing a `v*` tag | see the next section |
 
-`verify:practice-switch` 不进任何工作流：它的结束页卡片验证需要真实登录账号。
-
----
-
-## 发布
-
-1. 改 `package.json` 的 `version` 并提交到 `main`；
-2. `git tag v0.3.0 && git push origin v0.3.0`（tag 的版本号必须与 `package.json` 一致，
-   必须指向 `main` 上的提交，否则 `release.yml` 直接失败、不发布任何东西）。
-
-工作流跑 `pnpm run verify`，然后把 `dist/` 打成 ZIP：**归档根目录就是扩展本身**
-（`manifest.json` 在顶层），所以同一个 ZIP 既能给用户解压后「加载已解压的扩展」，
-也能直接上传商店。归档条目排序、不写额外属性、时间戳固定为被 tag 的提交时间，
-因此**重建同一提交得到字节一致的 ZIP**；Release 里同时附 `SHA256SUMS.txt`，
-谁都能自己复算。带后缀的 tag（`v0.3.0-rc.1`）发布为 pre-release。
+`verify:practice-switch` is not part of any workflow: its summary-card assertions need a real
+signed-in account.
 
 ---
 
-## 权限
+## Releasing
 
-| 权限 | 用途 | 代码 |
+1. Bump `version` in `package.json` and commit it to `main`;
+2. `git tag v0.3.0 && git push origin v0.3.0` (the tag's version must equal `package.json`'s, and it
+   must point at a commit on `main`, or `release.yml` fails outright and publishes nothing).
+
+The workflow runs `pnpm run verify`, then packs `dist/` into a ZIP whose **archive root is the
+extension itself** (`manifest.json` at the top level), so the same ZIP both works for users loading
+it unpacked and can be uploaded to a store as-is. Entries are sorted, carry no extra attributes and
+have their timestamps pinned to the tagged commit, so **rebuilding the same commit yields a
+byte-identical ZIP**; the release also ships `SHA256SUMS.txt` so anyone can recompute it. A tag with a
+suffix (`v0.3.0-rc.1`) is published as a pre-release.
+
+---
+
+## Permissions
+
+| Permission | Purpose | Code |
 |---|---|---|
-| `storage` | 保存设置、计时记录、进行中的会话 | `src/storage.ts` |
-| `activeTab` | 弹出面板读取当前标签页的实时计时状态 | `src/popup.ts` |
+| `storage` | Save settings, timing records and in-flight sessions locally | `src/storage.ts` |
+| `activeTab` | Let the popup read the live timer status of the current tab | `src/popup.ts` |
 
-内容脚本只匹配 `https://www.khanacademy.org/*` 与 `https://*.khanacademy.org/*`。
-**没有** `host_permissions`、`tabs`、`cookies`、`clipboardRead`、`geolocation`、
-麦克风、摄像头，也没有任何「以后可能用到」的权限 —— `verify-dist.mjs` 把它当硬性检查。
+The content script matches only `https://www.khanacademy.org/*` and
+`https://*.khanacademy.org/*`. There is **no** `host_permissions`, `tabs`, `cookies`,
+`clipboardRead`, `geolocation`, microphone or camera access — and no "might be useful later"
+permissions. `verify-dist.mjs` treats this as a hard check.
 
 ---
 
-## 文档地图
+## Documentation map
 
-| 文档 | 读者 | 内容 |
+| Document | Reader | Content |
 |---|---|---|
-| [`README.md`](../README.md) | **用户** | 首页用户指南：从 Release 下载 ZIP 并导入 Chrome / Edge、使用、设置、隐私、疑难解答（English 默认 + 简体中文） |
-| [`docs/i18n.md`](i18n.md) | 维护者 | 多语言方案、语言解析、**新增一种语言的步骤** |
-| [`AGENTS.md`](../AGENTS.md) | AI agent / 维护者 | 改选择器前必读：如何自己抓到真实 DOM，而不是反推 |
-| 本文件（`docs/development.md`） | 维护者 | 架构与不变量、验证与 CI、项目结构、权限、发布、故障排查 |
+| [`README.md`](../README.md) | **users** | The user guide on the repo home page: downloading the ZIP from a release and importing it into Chrome / Edge, usage, settings, privacy, troubleshooting (bilingual, English first) |
+| [`docs/i18n.md`](i18n.md) | maintainers | The i18n design, language resolution, and **the steps to add another language** |
+| [`AGENTS.md`](../AGENTS.md) | AI agents / maintainers | Must-read before changing a selector: how to capture the real DOM yourself instead of inferring it |
+| this file (`docs/development.md`) | maintainers | Architecture and invariants, verification and CI, project layout, permissions, releasing, troubleshooting |
 
 ---
 
-## 故障排查
+## Troubleshooting
 
-**`pnpm run test` 报 Rollup 原生模块加载失败**（`Cannot find module @rollup/rollup-<platform>`、
-`ERR_DLOPEN_FAILED ... different Team IDs`）：`pnpm-workspace.yaml` 已把 `rollup` 覆盖为纯
-WebAssembly 版本（`@rollup/wasm-node`），默认不会出现；若装回了原生版本，
-`rm -rf node_modules pnpm-lock.yaml && pnpm install`。
+**`pnpm run test` fails to load Rollup's native module** (`Cannot find module
+@rollup/rollup-<platform>`, `ERR_DLOPEN_FAILED ... different Team IDs`): `pnpm-workspace.yaml`
+already overrides `rollup` with the pure WebAssembly build (`@rollup/wasm-node`), so this should not
+happen; if the native version got installed anyway, run
+`rm -rf node_modules pnpm-lock.yaml && pnpm install`.
 
-**构建后浏览器里没变化**：浏览器不会自动感知 `dist/`。扩展页点**重新加载**（↻）再刷新页面。
+**Nothing changes in the browser after a build**: browsers do not notice `dist/` changing. Click
+**reload** (↻) on the extension card, then refresh the page.
 
-**真实浏览器脚本报找不到浏览器**：看 `EDGE_PATH`，或脚本报错里列出的候选路径；
-`verify:edge` 需要网络并会驱动线上可汗学院。
+**A real-browser script cannot find the browser**: check `EDGE_PATH`, or use one of the candidate
+paths the script lists when it fails; `verify:edge` needs network access and drives the live Khan
+Academy site.
 
-**改了 `package.json` 的版本号但 manifest 没变**：manifest 由 `build.mjs` 在构建时同步，
-重新 `pnpm run build` 即可，不要手改 `public/manifest.json` 的 `version`。
+**The version changed in `package.json` but not in the manifest**: `build.mjs` syncs the manifest at
+build time — just run `pnpm run build` again, and never hand-edit `version` in
+`public/manifest.json`.
 
-**面板读数或记录不符合预期**：先打开弹窗的**开发者模式**看诊断（命中的选择器策略、
-置信度、题目指纹、最近事件）；页面上还可以直接读
+**The panel readout or the records look wrong**: first open the popup's **developer mode** and read
+the diagnostics (matched selector strategy, confidence, question key, last event). On the page you can
+also read them directly:
 
 ```js
 JSON.parse(document.getElementById('khan-academy-timer-host')
   .getAttribute('data-khan-timer-diagnostics'))
 ```
 
-其中 `unidentified: true` 表示此刻确实读不出题目。
+where `unidentified: true` means the page genuinely cannot be read at that moment.

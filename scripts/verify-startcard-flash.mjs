@@ -665,7 +665,7 @@ async function main() {
               `records=${records.length} firstQuestion=${firstQ}`,
             );
             check(
-              'its record carries no spurious paused time (the 暂停 0:01 report)',
+              'its record carries no spurious paused time (the "Paused 0:01" report)',
               first.pausedMs === 0 && first.wasPaused === false,
               `q=${first.q} pausedMs=${first.pausedMs} wasPaused=${first.wasPaused} durationMs=${first.durationMs}`,
             );

@@ -537,7 +537,7 @@ describe('QuestionDetector — DOM adapter', () => {
   });
 
   /*
-   * Recovery from 识别：未识别.
+   * Recovery from the unidentified state.
    *
    * When the SAME question is re-rendered, the progress marker that carries its
    * identity does not move at all, and the fresh subtree contains no mutation

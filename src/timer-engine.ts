@@ -172,7 +172,7 @@ export class TimerEngine {
    *
    * @param automatic true when the extension froze the clock itself — the page
    *   stopped offering an identifiable question — rather than the learner
-   *   pressing 暂停. An automatic pause deliberately does NOT set `sawPause`,
+   *   pressing Pause. An automatic pause deliberately does NOT set `sawPause`,
    *   so a record's `wasPaused` keeps meaning "the learner paused this
    *   question"; the frozen time is still reported through `pausedMs`.
    */

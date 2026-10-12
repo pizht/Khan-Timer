@@ -117,7 +117,7 @@ function startCardWithLeftoverRegionDom(): string {
 /**
  * The exercise chrome with the question area momentarily gone — what the page
  * looks like while the SPA swaps a question, and the state the panel labels
- * 识别：未识别.
+ * "Detection: unidentified".
  *
  * Deliberately keeps the progress cells and the Check button: without them the
  * page would also satisfy `isSummaryPage` and be mistaken for the end of the
@@ -252,7 +252,7 @@ function savedRecords(data: Record<string, unknown>): Array<Record<string, unkno
     []) as Array<Record<string, unknown>>;
 }
 
-/** The panel's own 暂停/继续 control, as the learner sees its label. */
+/** The panel's own Pause/Resume control, as the learner sees its label. */
 function pauseLabel(): string {
   return (
     overlayHost()?.shadowRoot?.querySelector('[data-role="pause"]')?.textContent?.trim() ?? ''
@@ -289,7 +289,8 @@ function answerCorrectly(index: number): void {
     ?.setAttribute('data-testid', `exercise-progress-${index}-correct-current`);
 }
 
-/** Rows of the injected "本轮每题用时" card, read out of its Shadow DOM. */
+/** Rows of the injected "Time per question in this attempt" card, read out of its
+ * Shadow DOM. */
 function summaryRowCount(): number {
   return (
     document.getElementById(SUMMARY_HOST_ID)?.shadowRoot?.querySelectorAll('tbody tr').length ?? 0
@@ -351,8 +352,8 @@ function summaryRows(): Array<{ label: string; duration: string }> {
 /**
  * The state the extension mirrors onto the page for support/verification:
  * `#khan-academy-timer-host[data-khan-timer-diagnostics]`. It is readable even
- * while the panel itself is hidden, which is what makes 识别：未识别 checkable
- * in a real browser.
+ * while the panel itself is hidden, which is what makes the unidentified state
+ * checkable in a real browser.
  */
 function diagnostics(): Record<string, unknown> {
   const raw = overlayHost()?.getAttribute('data-khan-timer-diagnostics');
@@ -492,7 +493,7 @@ describe('leaving a practice for another one', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 识别：未识别 — the page offers no usable question identity
+ * "Detection: unidentified" — the page offers no usable question identity
  * ------------------------------------------------------------------ */
 
 describe('a question that cannot be identified', () => {
@@ -509,7 +510,7 @@ describe('a question that cannot be identified', () => {
     expect(displayedMs()).toBeGreaterThanOrEqual(4000);
 
     // The question area disappears while the SPA swaps content: the page now
-    // has no usable identity, which the panel calls 识别：未识别.
+    // has no usable identity, which the panel calls "Detection: unidentified".
     setPage(interimDom({ index: 0, total: 4 }));
     await advance(1500);
 
@@ -545,7 +546,7 @@ describe('a question that cannot be identified', () => {
     expect(resumed['accumulatedMs']).toBeGreaterThanOrEqual(4000);
     expect(resumed['accumulatedMs']).toBeLessThan(9000);
     // The unidentified stretch is reported as paused time, and the learner
-    // never pressed 暂停.
+    // never pressed Pause.
     expect(resumed['pausedMs']).toBeGreaterThanOrEqual(30_000);
     expect(displayedMs()).toBeGreaterThanOrEqual(4000);
     expect(displayedMs()).toBeLessThan(12_000);
@@ -628,12 +629,12 @@ describe('a question that cannot be identified', () => {
     expect(records).toHaveLength(3);
     const paused = records[1] ?? {};
     expect(paused['questionKey']).toBe('id:progress:2 of 3');
-    // The 20 s of 未识别 are excluded from the question's time ...
+    // The 20 s of unidentified time are excluded from the question's time ...
     expect(paused['durationMs']).toBeGreaterThan(4000);
     expect(paused['durationMs']).toBeLessThan(15_000);
     // ... and reported separately as paused time.
     expect(paused['pausedMs']).toBeGreaterThanOrEqual(20_000);
-    // An automatic pause must not claim the learner pressed 暂停.
+    // An automatic pause must not claim the learner pressed Pause.
     expect(paused['wasPaused']).toBe(false);
     expect(paused['firstSubmissionOutcome']).toBe('correct');
 
@@ -659,7 +660,7 @@ describe('a question that cannot be identified', () => {
       enginePhase: 'running',
     });
 
-    // --- 「识别：未识别 → 暂停 → 恢复」第 2 步：题目区域消失 ---
+    // --- step 2 of "unidentified → paused → resumed": the region disappears ---
     const removed: Array<[Node, Element, Node | null]> = [
       ...document.querySelectorAll(
         'form[name="answerform"], .framework-perseus, .perseus-renderer',
@@ -675,7 +676,7 @@ describe('a question that cannot be identified', () => {
       enginePhase: 'paused',
     });
 
-    // --- 第 3 步：原样放回 ---
+    // --- step 3: put the region back unchanged ---
     [...removed].reverse().forEach(([parent, el, next]) => parent.insertBefore(el, next));
     await advance(1500);
 
@@ -693,8 +694,8 @@ describe('a question that cannot be identified', () => {
   });
 
   /**
-   * The reported bug: "为什么计时小面板会出现『无法可靠识别当前题目（question
-   * region not found）』？与现实不符".
+   * The reported bug (user report, translated): "Why does the timer panel show
+   * 'Cannot reliably identify the current question (question region not found)'?"
    *
    * A gap of a few hundred milliseconds - the SPA replacing the question subtree
    * while it re-renders - emitted `uncertain`, which froze the clock and wrote
@@ -763,7 +764,7 @@ describe('a question that cannot be identified', () => {
  * coming back, finishing the remaining questions produces a card for the
  * ORIGINAL practice that still lists the questions timed before the switch -
  * numbered by the question they are about, in question order, with a
- * 「数据缺失」 row for a number that has no data instead of the next question's
+ * "No data" row for a number that has no data instead of the next question's
  * time sliding up into its place.
  *
  * Real DOM, real detector, real coordinator, real storage shape (in memory),
@@ -924,7 +925,7 @@ describe('the card of a practice resumed after a switch', () => {
     expect(aRecords.map((record) => record['questionIndex'])).toEqual([0, 2]);
 
     // Three questions, numbered by the question each row is about: question 2
-    // says 数据缺失 rather than showing question 3's time under its number.
+    // says "No data" rather than showing question 3's time under its number.
     expect(summaryRowCount()).toBe(3);
     const rows = summaryRows();
     expect(rows[0]?.label).toContain(t('summary.questionNumber', { number: 1 }));
@@ -952,7 +953,7 @@ describe('the card of a practice resumed after a switch', () => {
  * can hold the previous question's region for much longer. The clock therefore
  * starts at the POSITION, not at the region: the page-load stretch (and any
  * start-card stretch) is never billed to the first question, and never shows up
- * in the summary as a mysterious 暂停 0:01 (see the report this pins down).
+ * in the summary as a mysterious "Paused 0:01" (see the report this pins down).
  */
 describe('a question region that carries no position yet', () => {
   it('does not start the clock until the page says which question it is', async () => {
@@ -1028,7 +1029,7 @@ describe('a question region that carries no position yet', () => {
 
     // The marker arrives: the same question resumes from the stored value, so
     // the interruption cost nothing, and the page load is not added to it -
-    // which is also what keeps a 暂停 0:0x row out of the summary.
+    // which is also what keeps a "Paused 0:0x" row out of the summary.
     renderProgress(0, 4);
     await advance(1500);
     expect(panelVisible()).toBe(true);
@@ -1224,7 +1225,7 @@ describe('the card is bound to the end-of-exercise screen', () => {
 /**
  * The reported bug:
  *
- *   "在第一次打开一个 practice 起始页的时候，会出现计时小面板，然后马上关闭。"
+ *   "Opening a practice start card shows the timer panel, then closes it at once."
  *
  * Opening a practice's start card showed the floating panel for a moment and
  * then took it away again. Two causes, both covered here:
@@ -1317,7 +1318,7 @@ describe('the panel appears only over a question being solved', () => {
     const { data } = installChromeStorage();
 
     // The start card is up, with the leftover question region that carries no
-    // position - the state the report describes ("尚未开始" but content that
+    // position - the state the report describes ("Not started yet" but content that
     // looks like a question). It stays up for a good while, as it does when the
     // learner reads it before pressing "Let's go".
     window.history.pushState({}, '', EXERCISE_A);
@@ -1342,7 +1343,7 @@ describe('the panel appears only over a question being solved', () => {
     });
     // Question 1 carries the time spent SOLVING it - the 30 s of intro card are
     // not on it, and nothing was ever auto-paused, so its record will not show
-    // the 暂停 0:01 that this report was about.
+    // the "Paused 0:01" that this report was about.
     const session = savedSession(data, EXERCISE_A);
     expect(session['pausedMs']).toBe(0);
     expect(session['accumulatedMs']).toBeLessThan(3000);
@@ -1408,7 +1409,7 @@ describe('closing the page right after answering', () => {
       wasPaused: false,
     });
     // The time it was solved for, and nothing paused: the page-load stretch was
-    // never timed, so there is no 暂停 0:01 on the first question.
+    // never timed, so there is no "Paused 0:01" on the first question.
     expect(records[0]?.['pausedMs']).toBe(0);
     expect(Number(records[0]?.['durationMs'])).toBeGreaterThanOrEqual(4000);
   });

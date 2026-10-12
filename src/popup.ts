@@ -45,7 +45,7 @@ interface StatusResponse {
   warning: string | null;
   lastEvent: string;
   /**
-   * The question's clock was frozen because the page is 识别：未识别. The
+   * The question's clock was frozen because the page is unidentified. The
    * in-page panel is hidden in that state, so the popup is where the learner
    * finds out that the clock is paused rather than stopped.
    */
@@ -140,7 +140,7 @@ function paintSettings(current: Settings): void {
   (el<HTMLInputElement>('resumeAcrossReload')).checked = current.resumeAcrossReload;
   (el<HTMLInputElement>('developerMode')).checked = current.developerMode;
 
-  // Detection internals are opt-in: without 开发者模式 the popup shows only the
+  // Detection internals are opt-in: without developer mode the popup shows only the
   // status line, the timer readout and the question progress row.
   document.body.classList.toggle('dev', current.developerMode);
 
@@ -361,7 +361,7 @@ function paintStatus(response: StatusResponse): void {
     statusText.textContent = t('popup.notStarted');
     statusText.className = 'status-value warn';
   } else if (response.pausedForUnidentified) {
-    // The panel is hidden while 未识别, so say plainly that time is not being
+    // The panel is hidden while unidentified, so say plainly that time is not being
     // counted and that the question keeps its earlier time.
     statusText.textContent = t('popup.pausedForUnidentified');
     statusText.className = 'status-value warn';

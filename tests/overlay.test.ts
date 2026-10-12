@@ -1,5 +1,5 @@
 /**
- * Overlay tests for the 开发者模式 gate.
+ * Overlay tests for the developer-mode gate.
  *
  * The floating panel is the only place a learner sees the timer while working,
  * so the detection internals it exposes (the confidence chip in the meta line
@@ -53,7 +53,7 @@ afterEach(() => {
   view = null;
 });
 
-describe('overlay: 开发者模式 gating', () => {
+describe('overlay: developer mode gating', () => {
   it('hides the detection internals while developer mode is off', () => {
     const root = mountOverlay({ developerMode: false });
 

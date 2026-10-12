@@ -1,10 +1,10 @@
 {
   "extName": {
     "message": "Khan Academy Timer",
-    "description": "扩展在浏览器界面与商店中显示的名称。品牌名，不翻译。"
+    "description": "Extension name shown in the browser UI and in the stores. A product name, so it is not translated."
   },
   "extDesc": {
     "message": "可汗学院练习题与测验的题目计时器：自动识别切题、正计时/倒计时、悬浮面板与本地记录。",
-    "description": "扩展管理页与商店列表中显示的描述。保持在 132 字符以内。"
+    "description": "Extension description shown on the Extensions page and in the store listing. Keep it under 132 characters."
   }
 }

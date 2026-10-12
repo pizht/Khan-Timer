@@ -204,13 +204,13 @@ function isBonus(record: QuestionRecord, highestRegular: number): boolean {
  *  - one row per question number, in question order, placed by the number the
  *    record was captured with (the page's own progress index) and never by the
  *    order the records arrived in;
- *  - a question number with no record becomes a `missing` row (「数据缺失」)
+ *  - a question number with no record becomes a `missing` row ("No data")
  *    rather than letting the next question's time slide up into its place;
  *  - several records for the same number (the learner came back to a question
  *    after leaving the practice, so it was timed in two stretches) become ONE
  *    row whose time is the sum of the stretches;
  *  - an optional bonus question is appended after the numbered rows, keeping
- *    its 「加试」 marker without ever repeating a number.
+ *    its "Bonus" marker without ever repeating a number.
  */
 export function buildSummaryRows(input: SummaryRowsInput): SummaryRow[] {
   const { records, questionTotal } = input;
@@ -248,7 +248,7 @@ export function buildSummaryRows(input: SummaryRowsInput): SummaryRow[] {
     rows.push(found ? mergeRecords(number, false, found) : missingRow(number));
   }
   // Numbered after the questions of the exercise, so a re-used index can never
-  // print a second 「第 1 题」.
+  // print a second "Question 1".
   bonus.forEach((record, position) => {
     rows.push(mergeRecords(count + position + 1, true, [record]));
   });
@@ -323,7 +323,7 @@ export interface SummaryViewCallbacks {
 /**
  * The outcome badge for a row. The bonus marker is rendered separately (see
  * `bonusTag` in the row builder), so it is deliberately not returned here —
- * doing both printed "加试" twice.
+ * doing both printed "Bonus" twice.
  */
 function tagFor(row: SummaryRow): { text: string; className: string } | null {
   if (row.skipped) return { text: t('summary.tagSkipped'), className: 'tag skipped' };

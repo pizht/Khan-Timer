@@ -185,8 +185,8 @@ export class ContentController {
   private currentQuestionTotal: number | null = null;
   /**
    * True while the page offers no usable question identity — the state the
-   * panel labels 识别：未识别. The clock for the question on screen is paused
-   * and the floating panel is hidden, so a clock that measures nothing is
+   * panel labels "Detection: unidentified". The clock for the question on screen
+   * is paused and the floating panel is hidden, so a clock that measures nothing is
    * neither shown nor counted.
    */
   private unidentified = false;
@@ -383,10 +383,11 @@ export class ContentController {
       this.resumeAfterIdentityRestored(event, event.at);
       // ... and the warning that described the degraded stretch goes with it.
       // A page that identifies its question again must never keep showing
-      // "无法可靠识别当前题目": the panel is on screen and the clock is running,
-      // so the text contradicts what the learner sees. A momentary gap — the SPA
-      // replacing the question subtree for a few hundred milliseconds — used to
-      // leave exactly that contradiction behind until the next question.
+      // "Cannot reliably identify the current question": the panel is on screen
+      // and the clock is running, so the text contradicts what the learner sees. A
+      // momentary gap — the SPA swapping the question subtree for a few hundred
+      // milliseconds — used to leave that contradiction behind until the next
+      // question.
       this.clearIdentityWarning();
     }
 
@@ -395,7 +396,7 @@ export class ContentController {
 
   /**
    * Freeze the clock of the question on screen because the page stopped
-   * offering an identifiable question (识别：未识别).
+   * offering an identifiable question ("Detection: unidentified").
    *
    * The engine is deliberately KEPT — only paused — which is what makes the
    * behaviour safe:
@@ -412,7 +413,7 @@ export class ContentController {
   private pauseForMissingIdentity(now: number): void {
     const engine = this.engine;
     if (!engine || engine.getPhase() !== 'running') return;
-    // Automatic: the learner did not press 暂停, so `wasPaused` stays false.
+    // Automatic: the learner did not press Pause, so `wasPaused` stays false.
     engine.pause(now, true);
     this.autoPausedForIdentity = true;
     this.lastEvent = { key: 'event.unidentifiedPaused' };
@@ -441,11 +442,11 @@ export class ContentController {
   }
 
   /**
-   * Drop the "无法可靠识别当前题目" warning.
+   * Drop the "Cannot reliably identify the current question" warning.
    *
    * It describes one stretch of page the extension could not read, so it is only
    * true while that stretch lasts. Re-identifying the question ends it — whether
-   * or not the clock had been auto-paused (a learner-requested 暂停 is also
+   * or not the clock had been auto-paused (a learner-requested Pause is also
    * resumed-by-identity-free, and must lose the stale text just the same).
    */
   private clearIdentityWarning(): void {
@@ -767,7 +768,7 @@ export class ContentController {
     // Re-evaluate so a reset never looks like a question change.
     this.detector?.reevaluate('manual-reset');
     // Resetting restarts the clock; on a page that is still unrecognised that
-    // would immediately contradict 识别：未识别, so freeze it again.
+    // would immediately contradict "Detection: unidentified", so freeze it again.
     if (this.unidentified && engine.getPhase() === 'running') this.pauseForMissingIdentity(now);
     void this.checkpoint(now, true);
     this.render();
@@ -841,7 +842,7 @@ export class ContentController {
       // it has already been stopped and its record is being held. A page that
       // merely has no question on it - the "Ready to practice?" intro card, or a
       // mid-transition frame - must never open the summary: that is how the card
-      // ended up rendered on top of an intro screen, showing 「暂无数据」.
+      // ended up rendered on top of an intro screen, showing "No data yet".
       const lastQuestionFinished =
         this.pendingRecord !== null ||
         (this.engine !== null && this.engine.getPhase() === 'finished');
@@ -918,7 +919,7 @@ export class ContentController {
     const window = await loadAttemptWindow(this.area, exerciseKey);
     const attempt = attemptRecordsFor(records, exerciseKey, runId, window?.since ?? null);
     // The card is a table of the exercise's questions, in question order, with a
-    // 「数据缺失」 row for a number this attempt never timed.
+    // "No data" row for a number this attempt never timed.
     const questionTotal =
       attempt.reduce((max, record) => Math.max(max, record.questionTotal ?? 0), 0) ||
       this.currentQuestionTotal;
@@ -1008,8 +1009,8 @@ export class ContentController {
       engineQuestionKey: this.engine?.questionKey ?? null,
       lastEvent: this.lastEventText,
       /**
-       * 识别：未识别, and whether this question's clock was frozen by the
-       * extension because of it. Both are readable from the page even while
+       * "Detection: unidentified", and whether this question's clock was frozen
+       * by the extension because of it. Both are readable from the page even while
        * the panel itself is hidden, which is what makes the behaviour
        * verifiable in a real browser.
        */
@@ -1102,8 +1103,8 @@ export class ContentController {
    *    engine is only ever created for a positioned question (see
    *    `onDetectionEvent`), so a start card's leftover Perseus region, a page
    *    load in progress and a torn-down frame all land here;
-   *  - 识别：未识别 (the page stopped offering an identity): a panel there would
-   *    advertise a clock for a question the extension cannot even name;
+   *  - "Detection: unidentified" (the page stopped offering an identity): a panel
+   *    there would advertise a clock for a question the extension cannot even name;
    *  - the engine still belongs to the practice the learner just LEFT, whose
    *    numbers have no meaning on the new page.
    *
@@ -1366,8 +1367,8 @@ export class ContentController {
       diagnostics: this.diagnostics,
       warning: this.warningText,
       lastEvent: this.lastEventText,
-      // 识别：未识别 with the question's clock frozen. The panel is hidden in
-      // this state, so this is how the learner finds out what happened.
+      // "Detection: unidentified" with the question's clock frozen. The panel is
+      // hidden in this state, so this is how the learner finds out what happened.
       pausedForUnidentified: this.autoPausedForIdentity,
       // Quiz / unit-test / course-challenge pages sit behind an intro card, so
       // "no question yet" there means "not started", not "unsupported".
@@ -1427,7 +1428,7 @@ function isStatusRequest(message: unknown): boolean {
  *
  * `confidence: 'none'` is exactly "no usable identity", whether that is because
  * no question region was found or because the region exposed nothing to key on.
- * It is the same condition the panel renders as 识别：未识别.
+ * It is the same condition the panel renders as "Detection: unidentified".
  */
 function isIdentified(snapshot: QuestionSnapshot): boolean {
   return snapshot.regionFound && snapshot.confidence !== 'none';

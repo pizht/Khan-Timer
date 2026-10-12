@@ -954,7 +954,7 @@ async function main() {
       console.log(
         '  NOTE: Khan Academy left the page in a transitional state ' +
           '(no answer form, progress markers still present, no summary). ' +
-          'The extension reports 识别：未识别, hides the panel and pauses this ' +
+          'The extension reports "no question identified" and pauses this ' +
           "question's clock instead of billing unreadable time to it.",
       );
       skipCheck(

@@ -379,7 +379,7 @@ export function recordsForRun(records: QuestionRecord[], runId: string): Questio
  * It exists because the run id can be lost in the middle of an attempt (measured
  * on khanacademy.org: moving to another practice inside the app ended the attempt
  * there, so the questions timed before the switch were filed under an older run
- * id and the card showed them as 数据缺失 even though their records were still
+ * id and the card showed them as "No data" even though their records were still
  * stored). The window is a second, independent way to find them again, keyed by
  * the practice route and a timestamp instead of by the attempt id.
  */

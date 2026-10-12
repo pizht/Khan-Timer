@@ -93,7 +93,7 @@ body {
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
 
 /* Detection internals (strategy, confidence, fingerprint, last event, raw
-   diagnostics) are only rendered while 开发者模式 is on. The progress row is
+   diagnostics) are only rendered while developer mode is on. The progress row is
    deliberately not marked, so it shows in both modes. */
 body:not(.dev) .dev-only { display: none; }
 

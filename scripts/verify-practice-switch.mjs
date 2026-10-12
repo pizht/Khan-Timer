@@ -673,8 +673,8 @@ async function finishPractice(cdp, label) {
  * Pin the interface language for this run.
  *
  * The extension renders in the language the learner chose (by default the
- * browser's), and every label this script asserts on — 「第 N 题」, 「数据缺失」,
- * 「加试」, 「暂停 0:17」 — is the Chinese one. Rather than hoping the browser's UI
+ * browser's), and every label this script asserts on — "Question N", "No data",
+ * "Bonus", "Paused 0:17" — is a Chinese rendering. Rather than hoping the UI
  * language matches, the setting is written through the extension's own storage
  * before practice A is opened, so the content script reads it on its first load.
  */
@@ -1024,7 +1024,7 @@ async function main() {
 /**
  * The first m:ss in a cell, in milliseconds.
  *
- * A duration cell can also carry a second line ("暂停 0:17"), so the whole string
+ * A duration cell can also carry a second line ("Paused 0:17"), so the whole string
  * is not a duration: take the leading m:ss token.
  */
 function parseDisplay(text) {

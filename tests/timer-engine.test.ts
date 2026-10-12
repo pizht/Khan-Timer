@@ -63,9 +63,9 @@ describe('TimerEngine — countup', () => {
   });
 
   it('an automatic pause freezes the clock without claiming the learner paused it', () => {
-    // 识别：未识别 freezes the clock itself. The question's time must be
+    // The unidentified state freezes the clock itself. The question's time must be
     // preserved and the frozen stretch must be reported as paused time, but
-    // `wasPaused` ("the learner pressed 暂停") has to stay false.
+    // `wasPaused` ("the learner pressed Pause") has to stay false.
     const engine = makeEngine();
     expect(engine.pause(T0 + 2_000, true)).toBe(true);
     expect(engine.getPhase()).toBe('paused');

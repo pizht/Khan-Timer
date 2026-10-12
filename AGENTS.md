@@ -147,9 +147,10 @@ assertion is stale" (fix the assertion) before changing either.
 - Some of the `scripts/capture/cdp-*.mjs` scripts are one-off investigation
   probes rather than polished tools; the maintained verification path is
   `scripts/verify-*.mjs`.
-- The original requirements document cited by older docs as "需求文档第 N 节" is
-  **no longer in this repository**, and neither are the files that cited it.
-  Treat any surviving mention as historical context.
+- The original requirements document cited by older docs as "需求文档第 N 节"
+  ("requirements document, section N") is **no longer in this repository**, and
+  neither are the files that cited it. Treat any surviving mention as historical
+  context.
 - There is no maintained list of "known limitations". The authoritative
   statements are the runtime degradation behaviour (visible in the panel) and
   the assertions in `tests/`.

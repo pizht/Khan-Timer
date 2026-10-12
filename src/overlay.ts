@@ -347,7 +347,7 @@ export class OverlayView {
     const collapsed = settings.overlayCollapsed;
     this.refs.body.style.display = collapsed ? 'none' : '';
     this.refs.pill.style.display = collapsed ? '' : 'none';
-    // Diagnostics footer follows 开发者模式 immediately, without waiting for the
+    // Diagnostics footer follows developer mode immediately, without waiting for the
     // next render tick.
     this.refs.foot.hidden = !settings.developerMode;
     this.refs.collapseBtn.textContent = collapsed ? '+' : '–';
@@ -480,7 +480,7 @@ export class OverlayView {
     if (state.progress) {
       bits.push(`<span class="k">${t('overlay.metaProgress')}</span> ${escapeHtml(state.progress)}`);
     }
-    // Detection internals are opt-in (popup → 开发者模式). Without it the panel
+    // Detection internals are opt-in (popup → developer mode). Without it the panel
     // keeps only what a learner needs: the time, the limit and the progress.
     if (this.settings.developerMode) {
       const confidenceClass = `confidence-${state.confidence}`;
@@ -501,9 +501,9 @@ export class OverlayView {
     }
     refs.meta.innerHTML = bits.join('');
 
-    // A warning only makes sense while the panel is on screen: in 识别：未识别 the
-    // panel is hidden, so rendering the text then would describe a state the
-    // learner cannot see, and it would still be sitting there once detection
+    // A warning only makes sense while the panel is on screen: in the unidentified
+    // state the panel is hidden, so rendering the text then would describe a state
+    // the learner cannot see, and it would still be sitting there once detection
     // recovers.
     if (state.warning && panelVisible) {
       refs.warning.hidden = false;
@@ -514,8 +514,8 @@ export class OverlayView {
     }
 
     // The footer (last detector event + saved-record count) is diagnostics, so
-    // it is only rendered in 开发者模式. The record count is still visible in the
-    // popup's 历史记录 card.
+    // it is only rendered in developer mode. The record count is still visible in the
+    // popup's History card.
     const eventEl = refs.foot.querySelector<HTMLElement>('[data-role="event"]');
     if (eventEl) eventEl.textContent = state.lastEvent;
     const recordsEl = refs.foot.querySelector<HTMLElement>('[data-role="records"]');

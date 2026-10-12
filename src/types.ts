@@ -44,7 +44,7 @@ export type EndReason =
 /** Outcome of the learner's first answer submission for a question. */
 export type FirstSubmissionOutcome = 'correct' | 'incorrect' | 'unknown';
 
-/** Storage status of a record, per spec 2.5 ("记录状态"). */
+/** Storage status of a record, per spec 2.5 ("record status"). */
 export type RecordStatus = 'completed' | 'expired' | 'partial' | 'skipped';
 
 /** How confidently the question identity was established. */
@@ -251,7 +251,7 @@ export interface SummaryRow {
   /**
    * True when the exercise has a question with this number but no timing data
    * for it (it was never timed, or its record was lost). The card prints
-   * 「数据缺失」 instead of silently moving the next question up.
+   * "No data" instead of silently moving the next question up.
    */
   missing?: boolean;
   /**
