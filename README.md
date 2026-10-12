@@ -1,26 +1,27 @@
 # Khan Academy Timer
 
-A small Chrome / Edge extension that times every question you answer on Khan Academy.
-It is installed by hand from a ZIP file — **there is nothing to build** — and it keeps all of its
-data on your own computer.
+A **Chrome / Edge** extension that times Khan Academy questions. Installed manually from a ZIP
+file.
+
+All data is stored locally.
 
 **English** · [简体中文](README.zh-CN.md)
 
 ---
 
-**Jump to:** [Install](#install-2-minutes) · [Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
+**Jump to:** [Install](#install) · [Update](#updating-to-a-new-version) · [Uninstall](#uninstalling) ·
 [Using it](#using-it) · [Settings](#settings) · [Privacy](#your-data-and-privacy) ·
 [Problems](#troubleshooting) · [FAQ](#faq)
 
-## What it does
+## Features
 
 - **Times each question automatically.** Open a practice exercise and a small floating panel appears
-  in the corner of the page and starts counting. When you move to the next question, the panel
-  restarts at `0:00` and the time you spent on the previous question is saved.
-- **Count up or count down.** Count up to see how long a question takes; count down to keep to a
-  time limit you set, with a visible "over time" state and an optional beep.
-- **Shows a summary at the end.** When you finish the last question, the summary screen gets a card
-  listing the time you spent on each question of that attempt.
+  in the corner of the page and starts counting. When you move to the next question, the reading
+  restarts and the time you spent on the previous question is saved.
+- **Count up or count down.** The countdown runs down from the limit you set, with a clear
+  "over time" state and an optional beep.
+- **A summary at the end.** The summary screen lists the time you spent on each question of the
+  attempt.
 - **Keeps the data on your machine.** Records live in your browser's local storage. The extension
   makes no network requests at all, and it never sends anything anywhere.
 
@@ -31,15 +32,15 @@ progress or scores. It only watches which question is on screen and how long it 
 
 | | |
 |---|---|
-| Browser | **Google Chrome 114+** or **Microsoft Edge 114+** (both are Chromium-based — the same ZIP works in both). Other Chromium browsers usually work the same way, but only Chrome and Edge are tested. |
-| Computer | Windows, macOS or Linux desktop. Extensions cannot be installed on phones or tablets. |
+| Browser | **Google Chrome 114+** or **Microsoft Edge 114+** (other Chromium browsers usually work too, but only Chrome and Edge are tested) |
+| Computer | Windows, macOS or Linux desktop. |
 | Where it works | Pages on `khanacademy.org` — practice exercises and quizzes |
 | Khan Academy account | Not needed for the timer itself |
 
-## Install (2 minutes)
+## Install
 
 The extension is **not** in the Chrome Web Store or the Edge Add-ons store, so you install it
-manually from the download on the Releases page. It takes about two minutes and you only do it once.
+manually from the download on the Releases page.
 
 ### 1. Download the ZIP
 
@@ -47,33 +48,11 @@ Open the releases page:
 
 **<https://github.com/pizht/Khan-Timer/releases/latest>**
 
-Under **Assets**, click the file named `khan-timer-<version>.zip`
-(for example `khan-timer-0.3.0.zip`).
+Under **Assets**, click the file named `khan-timer-<version>.zip`.
 
-> Do **not** download "Source code (zip)" or "Source code (tar.gz)" — those are the raw source
-> files and will not install.
+> Do **not** download "Source code (zip)" or "Source code (tar.gz)" — those are the raw source files.
 
 ### 2. Unzip it into a folder you will keep
-
-Unzip the download (double-click it on Windows/macOS) into a permanent place, for example
-`Documents\khan-timer` or `~/Documents/khan-timer`.
-
-Open the folder and check that you can see `manifest.json` **directly inside it**, next to
-`content.js`, `popup.html`, `icons` and `_locales`:
-
-```text
-khan-timer/
-├── manifest.json     ← this file must be directly in the folder
-├── content.js
-├── popup.html
-├── popup.js
-├── popup.css
-├── icons/
-└── _locales/
-```
-
-If you only see a single folder inside, open it — that inner folder is the one you need.
-If you see `manifest.json` inside a `dist` folder, use the `dist` folder.
 
 > **Keep this folder where it is.** The browser loads the extension from it every time it starts.
 > If you move or delete it, the timer stops working.
@@ -139,7 +118,7 @@ same folder.
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Click **Remove** on the Khan Academy Timer card and confirm.
-3. Delete the folder you unzipped — it is no longer needed.
+3. Delete the folder you unzipped.
 
 Removing the extension also deletes its saved settings and timing history from the browser.
 If you only want to erase the history and keep using the timer, use **Clear all records** in the
@@ -153,60 +132,15 @@ popup instead.
 |---|---|
 | A practice exercise with a question on screen | Panel shows, timing runs |
 | A quiz or unit test with a question on screen | Panel shows, timing runs |
-| The "Ready to practice?" start card before question 1 | Nothing — there is no question yet, so there is nothing to time |
-| Lesson pages, videos, articles, the course outline | Nothing — those pages have no questions |
-| The end-of-exercise summary screen | No panel; the per-question card is added instead |
-
-The panel follows the question, not the page: it appears as soon as the page confirms which
-question you are on, so it will never show a clock that cannot measure anything.
-
-### The panel
-
-| Part | What it does |
-|---|---|
-| Time readout | The time for the current question, `m:ss` |
-| Mode tag | `Count up` or `Countdown` |
-| `Limit 60s` / `Over +0:12` | In countdown mode: your limit, and how far past it you are |
-| `Progress 1 of 4` | Which question of the set you are on |
-| **Pause** / **Resume** | Stops or restarts the clock for this question |
-| **Reset question** | Sets *this* question back to `0:00`. Other questions and saved records are untouched. |
-| `–` button | Collapses the panel to a small pill showing only the time; click the pill to expand again |
-| Header drag | Drag the title bar to move the panel anywhere; the position is remembered |
-| `Done` / `Paused` badge | Shown after you answer correctly, skip, or pause |
-
-In countdown mode, when the time runs out the panel turns red and shows the overrun
-(for example `Over +0:12`). Nothing is submitted or skipped automatically — it is only a signal
-to you.
-
-### When the clock stops for a question
-
-| You do this | The timer |
-|---|---|
-| Answer correctly and press **Check** | Stops, and the panel shows `Done` |
-| Answer incorrectly | Keeps running — you can retry |
-| Press **Skip**, then confirm **Yes, skip** | Stops |
-| Press **Skip**, then **Cancel** | Keeps running |
-| Type an answer, open a hint, or select an option | Keeps running |
-| Move to the next question | Saves the finished question and starts the new one at `0:00` |
 
 ### The end-of-exercise card
 
 After you finish the last question of a set and Khan Academy shows its summary screen, a card named
-**Time per question in this attempt** appears above the results:
-
-```text
-Time per question in this attempt                     3 questions · 0:12 total
-──────────────────────────────────────────────────────────────────────────────
-Question                                                       Time
-Question 1   Correct                                           0:04
-Question 2   Skipped                                           0:05
-Question 3   Correct                                           0:03
-```
+**Time per question in this attempt** appears above the results.
 
 - Click the title (or the small arrow) to collapse and expand it; the choice is remembered.
 - Each row shows the question number, a `Correct` / `Incorrect` / `Skipped` / `Over time` tag and
-  the time. Questions that were never timed are listed as `No data` rather than silently shifting
-  the other rows.
+  the time. Questions that were never timed are listed as `No data`.
 - If you paused part-way through a question, its row also shows a small `Paused 0:05` note; the
   paused time is not counted in the total.
 - The card is added above Khan Academy's own content, so nothing that was already on the page is
