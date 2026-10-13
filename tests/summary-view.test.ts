@@ -16,10 +16,12 @@ import {
 } from '../src/summary-view.js';
 import {
   RUN_TTL_MS,
+  attemptRecordsFor,
   clearRun,
   loadRun,
   recordsForRun,
   runKey,
+  sanitizeRecords,
   sanitizeRun,
   saveRun,
 } from '../src/storage.js';
@@ -274,6 +276,67 @@ describe('buildSummaryRows (the card is a table of the exercise\'s questions)', 
     expect(rows[2]).toMatchObject({ questionNumber: 3, bonus: true });
     expect(rows.filter((row) => row.bonus)).toHaveLength(1);
     expect(rows.filter((row) => row.questionNumber === 1)).toHaveLength(1);
+  });
+
+  it('counts a stretch stored seven times once, so the bonus question gets one row', () => {
+    // The reported card, measured in a real profile on 2026-10-12: a practice of
+    // four questions plus the optional bonus question, whose records had been
+    // written up to seven times each - same question key, same start, same
+    // duration, only the id and the end differing. The card read
+    // "11 questions · 45:04 total", with question 1 at 12:58 for a question that
+    // took 1:51, and seven "Bonus" rows for the one bonus question.
+    const EXERCISE = '/test-prep/sat-reading-and-writing/x:foundations/e/central-ideas-and-details-foundations';
+    const RUN = 'run_2298817b';
+    const copies = (
+      count: number,
+      questionKey: string,
+      questionIndex: number,
+      questionTotal: number,
+      startedAt: number,
+      durationMs: number,
+      firstSubmissionOutcome: QuestionRecord['firstSubmissionOutcome'],
+    ): QuestionRecord[] =>
+      Array.from({ length: count }, (_, position) =>
+        rec({
+          id: `${questionKey}#${position}`,
+          questionKey,
+          exerciseKey: EXERCISE,
+          runId: RUN,
+          questionIndex,
+          questionTotal,
+          startedAt,
+          durationMs,
+          // A re-write of the same stretch keeps its frozen duration and only
+          // moves the moment it was written.
+          endedAt: startedAt + durationMs + position * 26_000,
+          firstSubmissionAt: startedAt + durationMs - 6_000,
+          firstSubmissionOutcome,
+        }),
+      );
+
+    const stored = sanitizeRecords({
+      version: 1,
+      records: [
+        ...copies(7, 'id:progress:1 of 4', 0, 4, 1_791_851_738_991, 111_269, 'incorrect'),
+        ...copies(1, 'id:progress:2 of 4', 1, 4, 1_791_852_635_728, 137_404, 'correct'),
+        ...copies(3, 'id:progress:3 of 4', 2, 4, 1_791_853_011_409, 101_851, 'correct'),
+        ...copies(3, 'id:progress:4 of 4', 3, 4, 1_791_853_370_470, 105_053, 'correct'),
+        // The bonus question: the page's marker drops to a single cell, so its
+        // own index (0) reads as "before" every question of the exercise.
+        ...copies(7, 'id:progress:1 of 1', 0, 1, 1_791_854_401_057, 166_823, 'correct'),
+      ],
+    });
+
+    // Read back exactly the way the card reads it.
+    const attempt = attemptRecordsFor(stored, EXERCISE, RUN);
+    const rows = buildSummaryRows({ records: attempt, questionTotal: 4 });
+
+    expect(rows.map((row) => row.questionNumber)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.filter((row) => row.bonus)).toHaveLength(1);
+    // Each question keeps its own time instead of the sum of its copies.
+    expect(rows.map((row) => row.durationMs)).toEqual([
+      111_269, 137_404, 101_851, 105_053, 166_823,
+    ]);
   });
 
   it('keeps a record the page gave no position for, without inventing a number', () => {

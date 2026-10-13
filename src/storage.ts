@@ -163,12 +163,13 @@ export function sanitizeRecords(raw: unknown): QuestionRecord[] {
   const container = isRecord(raw) ? raw : {};
   const items = Array.isArray(container['records']) ? container['records'] : [];
   const out: QuestionRecord[] = [];
+  const stretches = new Set<string>();
   for (const candidate of items) {
     if (!isRecord(candidate)) continue;
     const questionKey = typeof candidate['questionKey'] === 'string' ? candidate['questionKey'] : '';
     const startedAt = Number(candidate['startedAt']);
     if (!questionKey || !Number.isFinite(startedAt)) continue;
-    out.push({
+    const record: QuestionRecord = {
       id: typeof candidate['id'] === 'string' && candidate['id'] ? candidate['id'] : `r_${startedAt}`,
       questionKey,
       exerciseKey: typeof candidate['exerciseKey'] === 'string' ? candidate['exerciseKey'] : '',
@@ -209,9 +210,31 @@ export function sanitizeRecords(raw: unknown): QuestionRecord[] {
         typeof candidate['questionIndex'] === 'number' ? candidate['questionIndex'] : null,
       questionTotal:
         typeof candidate['questionTotal'] === 'number' ? candidate['questionTotal'] : null,
-    });
+    };
+    // A stretch of a question is stored once. Copies written by an older version
+    // (see `stretchKey`) are folded away on the way in, so a card built from
+    // storage cannot add the same stretch up several times or print one row per
+    // copy of the bonus question.
+    const key = stretchKey(record);
+    if (stretches.has(key)) continue;
+    stretches.add(key);
+    out.push(record);
   }
   return out;
+}
+
+/**
+ * Identity of one continuous timing of one question: the practice it happened
+ * on, the question, and the instant its clock started.
+ *
+ * Two records with the same three are the SAME stretch written twice, not two
+ * visits to the question - a later visit starts its clock at a later
+ * millisecond, which is what makes "the learner came back to this question" two
+ * records with two different starts (and their rows add up, by design; see
+ * `buildSummaryRows`).
+ */
+export function stretchKey(record: QuestionRecord): string {
+  return `${record.exerciseKey}\u0000${record.questionKey}\u0000${record.startedAt}`;
 }
 
 export async function loadRecords(area: StorageArea | null): Promise<QuestionRecord[]> {
@@ -227,6 +250,12 @@ export async function loadRecords(area: StorageArea | null): Promise<QuestionRec
 /**
  * Append one record, keeping only the newest `MAX_RECORDS`.
  * Returns the resulting list, or null when the write failed.
+ *
+ * A stretch of a question is stored once: a record that repeats one already
+ * stored (same practice, same question, same start - see `stretchKey`) is the
+ * same stretch timed once, so it is not appended a second time. That is what
+ * keeps a question answered and then left on screen from being counted twice by
+ * the end-of-exercise card, whatever the learner does to the page in between.
  */
 export async function addRecord(
   area: StorageArea | null,
@@ -235,6 +264,8 @@ export async function addRecord(
   if (!area) return null;
   try {
     const existing = await loadRecords(area);
+    const key = stretchKey(record);
+    if (existing.some((stored) => stretchKey(stored) === key)) return existing;
     const next = [...existing, record].slice(-MAX_RECORDS);
     await area.set({ [RECORDS_KEY]: { version: 1, records: next } satisfies StoredRecords });
     return next;

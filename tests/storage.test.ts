@@ -290,6 +290,82 @@ describe('records', () => {
 });
 
 /**
+ * A stretch of a question - one continuous timing of one question - is stored
+ * once, and read back once.
+ *
+ * This is the rule the reported "seven Bonus rows" bug needed. Measured in a
+ * real profile on 2026-10-12: a practice of four questions plus the optional
+ * bonus question had written 21 records, in which each question appeared up to
+ * SEVEN times with the same questionKey, the same startedAt and the same
+ * durationMs (only the id and the endedAt differed - the mark of a re-write, not
+ * of a re-visit). The card adds records of the same question together by
+ * design - two visits to a question are two stretches - so those copies made
+ * question 1 read 12:58 for a question that took 1:51, and every copy of the
+ * bonus question, which is placed by its own index, became a row of its own.
+ *
+ * Two records of the same question that are genuinely two stretches (the learner
+ * left the practice and came back to it) have two different starts, so they are
+ * kept and their row adds up.
+ */
+describe('one stretch of a question is one record', () => {
+  const STRETCH = makeRecord({ id: 'rec_1' });
+  /** The same stretch, written again: what a re-write of a held record looks like. */
+  const REWRITE = {
+    ...STRETCH,
+    id: 'rec_2',
+    endedAt: STRETCH.endedAt + 26_000,
+  };
+
+  it('does not append a second copy of a stretch that is already stored', async () => {
+    const area = new FakeArea();
+    await addRecord(area, STRETCH);
+    await addRecord(area, REWRITE);
+
+    const records = await loadRecords(area);
+    expect(records.map((record) => record.id)).toEqual(['rec_1']);
+    // The one that is kept is the one already stored: the copy carries no time
+    // of its own (its duration is the frozen duration of the same stretch).
+    expect(records[0]?.durationMs).toBe(STRETCH.durationMs);
+  });
+
+  it('drops copies of a stretch that an older version already stored', () => {
+    const records = sanitizeRecords({
+      version: 1,
+      records: [STRETCH, REWRITE, makeRecord({ id: 'rec_3' })],
+    });
+    expect(records.map((record) => record.id)).toEqual(['rec_1']);
+  });
+
+  it('keeps two visits to the same question, because they started at different times', async () => {
+    const area = new FakeArea();
+    const first = makeRecord({ id: 'visit_1', startedAt: 1_700_000_000_000, durationMs: 4000 });
+    const second = makeRecord({
+      id: 'visit_2',
+      startedAt: 1_700_000_600_000,
+      endedAt: 1_700_000_602_500,
+      durationMs: 2500,
+    });
+    await addRecord(area, first);
+    await addRecord(area, second);
+
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual(['visit_1', 'visit_2']);
+  });
+
+  it('keeps the same question number of another practice', async () => {
+    const area = new FakeArea();
+    // Same question identity and the same start, but timed on another practice:
+    // a different stretch, and the card is built per practice.
+    await addRecord(area, STRETCH);
+    await addRecord(area, makeRecord({ id: 'rec_other', exerciseKey: '/math/x/e/other' }));
+
+    expect((await loadRecords(area)).map((record) => record.id)).toEqual([
+      'rec_1',
+      'rec_other',
+    ]);
+  });
+});
+
+/**
  * `addRecord` is a read-modify-write and `chrome.storage` has no transaction:
  * two overlapping calls both read the old list and the second `set` then drops
  * the first record. That is how a question can vanish from the end-of-exercise
@@ -318,8 +394,16 @@ describe('record write queue (no torn read-modify-write)', () => {
     const area = new SlowArea();
     const queue = createRecordQueue(area);
 
+    // Three questions of one practice, written back to back. Each is its own
+    // stretch, so each carries its own question identity: records that share
+    // practice, question AND start are one stretch stored twice, and the second
+    // copy is deliberately not appended (see `stretchKey`).
     const ids = ['rec_a', 'rec_b', 'rec_c'];
-    await Promise.all(ids.map((id) => queue.add(makeRecord({ id }))));
+    await Promise.all(
+      ids.map((id, position) =>
+        queue.add(makeRecord({ id, questionKey: `id:progress:${position + 1} of 3` })),
+      ),
+    );
     await queue.flush();
 
     expect((await loadRecords(area)).map((record) => record.id)).toEqual(ids);

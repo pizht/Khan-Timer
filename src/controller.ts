@@ -153,6 +153,26 @@ export class ContentController {
    * changes or the summary appears, so the row is available for the summary.
    */
   private pendingRecord: QuestionRecord | null = null;
+  /**
+   * The record of the question on screen that has already been written out.
+   *
+   * An answered question keeps its record held (see `pendingRecord`) until the
+   * question changes, so the card can include the last question of the exercise.
+   * Leaving the page writes it out - closing the tab right after answering must
+   * not be lossy - but the question itself does not go away: the learner is still
+   * looking at it, and the check that catches a question finished by a correct
+   * retry ("Check has been replaced by the advance control") keeps firing. So
+   * without remembering what has been stored, every tab switch, reload or detour
+   * through another practice wrote ANOTHER copy of the same question, and the
+   * card then added those copies up and printed one row per copy of the bonus
+   * question.
+   *
+   * Identified by the same three fields the storage layer identifies a stretch
+   * with - practice, question and the instant its clock started - so a question
+   * the learner RESETS and answers again (a new clock, i.e. a new stretch) is
+   * still recorded.
+   */
+  private storedRecord: QuestionRecord | null = null;
   /** Set while the learner is on the end-of-exercise summary screen. */
   private inSummary = false;
   /** Rows shown on the summary card, kept so settings changes can re-render. */
@@ -591,7 +611,12 @@ export class ContentController {
     if (this.pendingRecord !== null) return;
 
     if (engine.getPhase() === 'finished') {
-      this.pendingRecord = this.buildRecord(engine, engine.snapshot(now), now, reason);
+      const final = engine.snapshot(now);
+      // The question is finished AND already stored: the learner answered it,
+      // left the page (which wrote the held record out) and came back to it. It
+      // is one question, timed once, and it already has its record.
+      if (this.isStored(engine, final.startedAt)) return;
+      this.pendingRecord = this.buildRecord(engine, final, now, reason);
       return;
     }
     const final = engine.finish(now, reason);
@@ -600,6 +625,23 @@ export class ContentController {
     this.lastEvent = { key: reason === 'skipped' ? 'event.skipped' : 'event.answeredCorrect' };
     void this.checkpoint(now, true);
     this.render();
+  }
+
+  /**
+   * Is the stretch the engine is timing already in storage?
+   *
+   * Compared through the storage layer's own identity for a stretch (practice +
+   * question + start), so this can only ever be true for the very same timing of
+   * the very same question - see `storedRecord`.
+   */
+  private isStored(engine: TimerEngine, startedAt: number | null): boolean {
+    const stored = this.storedRecord;
+    if (stored === null || startedAt === null) return false;
+    return (
+      stored.exerciseKey === engine.exerciseKey &&
+      stored.questionKey === engine.questionKey &&
+      stored.startedAt === startedAt
+    );
   }
 
   private async finalizeCurrentQuestion(now: number, reason: EndReason): Promise<void> {
@@ -621,7 +663,12 @@ export class ContentController {
     this.engine = null;
     await clearSession(this.area, engine.exerciseKey);
 
-    const record = held ?? this.buildRecord(engine, final, now, reason);
+    // A question whose record is already stored (the learner left the page on it
+    // and came back) is not recorded a second time - see `storedRecord`.
+    const record =
+      held ??
+      (this.isStored(engine, final.startedAt) ? null : this.buildRecord(engine, final, now, reason));
+    if (record === null) return;
 
     // A question abandoned almost instantly, with no answer ever submitted, is
     // far more likely to be detection noise than a real attempt.
@@ -642,10 +689,17 @@ export class ContentController {
    * question when the learner switches practice, the self-heal branch that
    * flushes a stale held record - can therefore never interleave with another
    * one and drop a row of the end-of-exercise card.
+   *
+   * Landing here is also what marks the question as recorded, which is what
+   * stops the same question from being written again while it is still the one
+   * on screen: see `storedRecord`.
    */
   private async queueRecord(record: QuestionRecord): Promise<void> {
     const saved = await this.recordQueue.add(record);
-    if (saved) this.recordsCount = saved.length;
+    if (saved) {
+      this.recordsCount = saved.length;
+      this.storedRecord = record;
+    }
   }
 
   /** Resolve once every queued record write has landed. */

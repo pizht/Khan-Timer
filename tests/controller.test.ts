@@ -289,6 +289,38 @@ function answerCorrectly(index: number): void {
     ?.setAttribute('data-testid', `exercise-progress-${index}-correct-current`);
 }
 
+/**
+ * The state the real page leaves an answered question in [OBS]: the Check button
+ * is gone and the advance control has taken its place, so the question reads as
+ * "finished" while it is still the one on screen. That is the state the learner
+ * sits in between answering and clicking "Next question" - and the state a tab
+ * switch, a reload or a detour through another page happens in.
+ */
+function replaceCheckWithAdvance(): void {
+  const check = document.querySelector('[data-testid="exercise-check-answer"]');
+  if (!check) throw new Error('the page has no Check button to replace');
+  const next = document.createElement('button');
+  next.setAttribute('data-testid', 'exercise-next-question');
+  next.textContent = 'Next question';
+  check.replaceWith(next);
+}
+
+/**
+ * What the learner does to the page when they leave it: the tab goes to the
+ * background (visibilitychange) and the page is hidden (pagehide). Both are
+ * wired to the same flush, and a reload fires both as well.
+ */
+function leaveThePage(): void {
+  window.dispatchEvent(new Event('pagehide'));
+}
+
+/** Answer question `index`, as the page renders it afterwards. */
+async function answerAndReplaceControls(index: number): Promise<void> {
+  answerCorrectly(index);
+  replaceCheckWithAdvance();
+  await advance(1000);
+}
+
 /** Rows of the injected "Time per question in this attempt" card, read out of its
  * Shadow DOM. */
 function summaryRowCount(): number {
@@ -1412,5 +1444,124 @@ describe('closing the page right after answering', () => {
     // never timed, so there is no "Paused 0:01" on the first question.
     expect(records[0]?.['pausedMs']).toBe(0);
     expect(Number(records[0]?.['durationMs'])).toBeGreaterThanOrEqual(4000);
+  });
+});
+
+/* ================================================================== *
+ * One question is one record (reported bug, measured in a real profile)
+ * ================================================================== */
+
+/**
+ * The bug this block encodes. A practice of 4 questions plus the optional bonus
+ * question produced a card with ELEVEN rows - questions 1-4 and seven "Bonus"
+ * rows - on which question 1 read 12:58 for a question that took 1:51.
+ *
+ * The stored records showed why: one and the same stretch of a question (same
+ * questionKey, same startedAt, same durationMs - a new id and a new endedAt each
+ * time) had been written to storage up to seven times. The card adds records of
+ * the same question number together by design (two visits to a question are two
+ * stretches), so the copies inflated question 1 to 7 x 1:51 = 12:58; and every
+ * copy of the bonus question - which is placed by its own index, not by its
+ * number - became a row of its own.
+ *
+ * Where the copies came from: an answered question keeps its record HELD while
+ * it is still on screen, so the card can include the last question of the
+ * exercise. Writing that record out when the learner leaves the page is
+ * deliberate - closing the tab right after answering must not be lossy - but it
+ * left nothing behind that said "this question has already been recorded", and
+ * the answered question stays on screen until the learner clicks "Next
+ * question":
+ *
+ *   - a tab switch writes the held record, coming back re-arms a fresh copy of
+ *     the same question (the "Check has been replaced by the advance control"
+ *     check sees a finished question), and the next tab switch writes it out -
+ *     one copy per switch, however long the learner sits there;
+ *   - a reload restores the finished session, which re-arms the same copy.
+ *
+ * The learner in the profile switched tabs and reloaded several times while the
+ * answered question was up, which is exactly how seven copies of one question
+ * were produced.
+ */
+describe('one question is one record, however often the learner leaves the page', () => {
+  it('does not store a second copy when the learner switches tabs on an answered question', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5000);
+
+    // Answer question 1; the page swaps Check for the advance control, and the
+    // learner has not clicked it yet.
+    await answerAndReplaceControls(0);
+
+    // Four round trips to another tab and back, as the learner does while
+    // comparing the timer against something else.
+    for (let round = 0; round < 4; round += 1) {
+      leaveThePage();
+      await advance(2000);
+    }
+
+    const records = savedRecords(data);
+    expect(records).toHaveLength(1);
+    expect(
+      new Set(records.map((record) => record['startedAt'])).size,
+    ).toBe(1);
+  });
+
+  it('does not store a second copy when the page is reloaded on an answered question', async () => {
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5000);
+    await answerAndReplaceControls(0);
+
+    // The learner reloads the page instead of advancing.
+    leaveThePage();
+    await advance(1000);
+    expect(savedRecords(data)).toHaveLength(1);
+
+    // The page comes back with the same answered question on it: it is the same
+    // question, timed once, so it is stored once.
+    controller.dispose();
+    controller = null;
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    replaceCheckWithAdvance();
+    controller = new ContentController();
+    await controller.init();
+    await advance(3000);
+    leaveThePage();
+    await advance(1000);
+
+    expect(savedRecords(data)).toHaveLength(1);
+  });
+
+  it('still stores the question when the learner answers it and moves on', async () => {
+    // The guard must not become a "never store anything" rule: the ordinary
+    // answer-and-advance flow still produces exactly one record per question.
+    const { data } = installChromeStorage();
+
+    window.history.pushState({}, '', EXERCISE_A);
+    setPage(exerciseDom({ index: 0, total: 4 }));
+    controller = new ContentController();
+    await controller.init();
+    await advance(5000);
+
+    await answerAndReplaceControls(0);
+    setPage(exerciseDom({ index: 1, total: 4, stem: 'Add. 251+608' }));
+    await advance(2500);
+
+    await answerAndReplaceControls(1);
+    setPage(exerciseDom({ index: 2, total: 4, stem: 'Add. 999+1' }));
+    await advance(2500);
+
+    const records = savedRecords(data);
+    expect(records).toHaveLength(2);
+    expect(records.map((record) => record['questionIndex'])).toEqual([0, 1]);
+    expect(new Set(records.map((record) => record['startedAt'])).size).toBe(2);
   });
 });

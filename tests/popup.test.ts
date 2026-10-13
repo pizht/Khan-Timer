@@ -234,16 +234,20 @@ describe('popup records section', () => {
   });
 
   it('ends each history row with the question it is about, not a chopped identity', async () => {
-    // Oldest first in storage; the list renders newest first.
+    // Oldest first in storage; the list renders newest first. Every record is a
+    // separate stretch of a question and carries its own start: records that
+    // share practice, question AND start are one stretch that was stored twice,
+    // and a reader folds those together (see `stretchKey`).
+    const base = Date.now();
     store = {
       records: {
         version: 1,
         records: [
-          makeRecord({ id: 'r_hash', questionKey: 'id:abc1234567890xyz', questionIndex: null, questionTotal: null }),
-          makeRecord({ id: 'r_legacy_short', questionKey: 'id:progress:#2', questionIndex: null, questionTotal: null }),
-          makeRecord({ id: 'r_legacy', questionKey: 'id:progress:4 of 7', questionIndex: null, questionTotal: null }),
-          makeRecord({ id: 'r_no_total', questionIndex: 0, questionTotal: null }),
-          makeRecord({ id: 'r_positioned', questionIndex: 3, questionTotal: 10 }),
+          makeRecord({ id: 'r_hash', startedAt: base + 1000, questionKey: 'id:abc1234567890xyz', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_legacy_short', startedAt: base + 2000, questionKey: 'id:progress:#2', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_legacy', startedAt: base + 3000, questionKey: 'id:progress:4 of 7', questionIndex: null, questionTotal: null }),
+          makeRecord({ id: 'r_no_total', startedAt: base + 4000, questionIndex: 0, questionTotal: null }),
+          makeRecord({ id: 'r_positioned', startedAt: base + 5000, questionIndex: 3, questionTotal: 10 }),
         ],
       },
     };
